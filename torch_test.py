@@ -177,6 +177,8 @@ def panic(msg="ERROR"):
     print(msg)
     exit(1)
 
+import os
+
 def main_info():
     args = AppArgs()
     model = load_model(args)
@@ -185,7 +187,18 @@ def main_info():
     model_info.calculate_buffers(np.array([32, 32, 1]))
 
     h, w = bnnc.code_gen.model_to_c(model_info)
-    print(h)
+    with open("Code/bnn_model.h", "w") as f:
+        f.write(h)
+    with open("Code/bnn_model_weights.h", "w") as f:
+        f.write(w)
+    
+    os.system(f"""
+        rm -rf Code/bnn
+        cp -r {bnnc.code_gen.bnnc_c_sources_abspath}/bnn Code/bnn
+        cp {bnnc.code_gen.bnnc_c_sources_abspath}/test_main.c Code/main.c
+        cd Code
+        make main
+    """)
 
 
 if __name__ == "__main__":

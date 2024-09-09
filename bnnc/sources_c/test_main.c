@@ -1,30 +1,32 @@
 // Model headers and config include
-// Must be included in this order
 
-#include <bnn/config.h>
-
+#include "bnn_model_weights.h"
 #include "bnn_model.h"
-#include "test_data.h"
 
 #include <stdio.h>
 
+// TODO REMOVE ONLY FOR TESTING
+#define FEATURES_PER_DATA 1
+#define NUM_DATA 1
+Data_t data_matrix[500000];
+
+
 int main() {
-    size_t output_size = num_classes;
-    Softmax_t* output_p = sequential_output;
+    size_t output_size = bnn_model_num_classes;
 
     // Print CSV header for output
     // input, mcpass, class0, class1, ...
     printf("input,mcpass,");
-    for(size_t i = 0; i < num_classes; i++) {
+    for(size_t i = 0; i < output_size; i++) {
         printf("class%i", i);
-        if (i != num_classes - 1) printf(",");
+        if (i != output_size - 1) printf(",");
     }
     printf("\n");
 
     for(size_t i = 0; i < NUM_DATA; i++) {
         for(size_t j = 0; j < BNN_MC_PASSES; j++) {
             
-            sequential_inference(&data_matrix[FEATURES_PER_DATA*i]);
+            Data_t* output_p = bnn_model_inference(data_matrix + FEATURES_PER_DATA*i);
             
             // Print prediction
             printf("%i, %i, ", i, j);

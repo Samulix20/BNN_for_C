@@ -4,6 +4,9 @@ from math import log2, ceil, sqrt, isinf
 import numpy as np
 import numpy.typing as npt
 
+import os
+bnnc_c_sources_abspath = f"{os.path.dirname(__file__)}/sources_c"
+
 C_DATA_TYPE_RANGES = { 
     "uint8":  [0,        2**8 - 1],
     "int8":   [-(2**7),  2**7 - 1],
@@ -84,7 +87,7 @@ def model_internal_buffer_end_id(m: ModelInfo):
 def create_model_internal_buffers(m: ModelInfo):
     r = ""
     r += f"Data_t {model_internal_buffer_id(m)}[{m.max_buffer_required}];\n"
-    r += f"Data_t* {model_internal_buffer_end_id(m)} = {model_internal_buffer_id(m)} + {m.max_buffer_required};\n\n"
+    r += f"Data_t* const {model_internal_buffer_end_id(m)} = {model_internal_buffer_id(m)} + {m.max_buffer_required};\n\n"
     return r
 
 
@@ -199,5 +202,5 @@ def model_to_c(model: ModelInfo):
 
     model_hdr = f"{MODEL_HDR_INCLUDES}\n{model_buffers_ptrs}\n{model_fcall}"
     model_weights = f"{MODEL_WEIGHTS_INCLUDES}\n{model_weights}"
-    return model_hdr, model_weights
 
+    return model_hdr, model_weights
