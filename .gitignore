@@ -1,0 +1,11 @@
+# Output folders
+Model
+Data
+Figures
+
+# Python env folders
+__pycache__
+pyenv
+
+# Tmp/Log Files
+*.log
