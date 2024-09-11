@@ -2,14 +2,9 @@
 
 #include "bnn_model_weights.h"
 #include "bnn_model.h"
+#include "test_data.h"
 
 #include <stdio.h>
-
-// TODO REMOVE ONLY FOR TESTING
-#define FEATURES_PER_DATA 1
-#define NUM_DATA 1
-Data_t data_matrix[500000];
-
 
 int main() {
     size_t output_size = bnn_model_num_classes;

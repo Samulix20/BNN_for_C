@@ -58,7 +58,7 @@ def accuracy(metrics: npt.NDArray) -> float:
 
     return np.sum(metrics[:,0]) / metrics.shape[0]
 
-def analyze_predictions(predictions: npt.NDArray, labels: npt.NDArray) -> (npt.NDArray, npt.NDArray):
+def analyze_predictions(predictions: npt.NDArray, labels: npt.NDArray) -> tuple[npt.NDArray, npt.NDArray]:
     """
     Calculates acuracy of the predictions samples average and its related uncertainty metrics
 

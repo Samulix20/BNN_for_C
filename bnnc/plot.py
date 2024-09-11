@@ -34,9 +34,9 @@ def plot_accuracy_by_samples(plot_data, result_dir):
 
 def plot_accuracy_by_samples_double(plots_data, result_dir):
     fig, axes = pl.subplots(1,1)
-    plot_data = plots_data[0]
-    axes.plot(plot_data[0], plot_data[1], color=COLOR_1, zorder=3, label="C")
     plot_data = plots_data[1]
+    axes.plot(plot_data[0], plot_data[1], color=COLOR_1, zorder=3, label="C")
+    plot_data = plots_data[0]
     axes.plot(plot_data[0], plot_data[1], color=COLOR_2, zorder=3, label="Python")
     axes.set_xlabel("Number of Samples")
     axes.set_ylabel("Accuracy")
@@ -95,12 +95,12 @@ def plot_accuracy_vs_uncertainty_double(plots_data, result_dir):
     w = plots_data[0][0][1]
 
     # Plot
-    plot_data = plots_data[0]
+    plot_data = plots_data[1]
     axes.bar(plot_data[0][0][:-1]-w/4, plot_data[1][:,1], width=w/2, edgecolor='black', color=COLOR_1)
     axes.plot(plot_data[0][0][:-1], plot_data[1][:,0], color=COLOR_1)
 
     # Repeat using same bins for python prediction
-    plot_data = plots_data[1]
+    plot_data = plots_data[0]
     axes.bar(plot_data[0][0][:-1]+w/4, plot_data[1][:,1], width=w/2, edgecolor='black', color=COLOR_2)
     axes.plot(plot_data[0][0][:-1], plot_data[1][:,0], color=COLOR_2)
 
@@ -237,11 +237,11 @@ def plot_calibration_double(plots_data, result_dir):
 
     fig, ax = pl.subplots(1,1)
     
-    plot_data = plots_data[0]
+    plot_data = plots_data[1]
     ax.plot(plot_data[0][0], plot_data[0][0], color='black', linestyle='dashed')
     ax.plot(plot_data[0][0], plot_data[1], color=COLOR_1)
 
-    plot_data = plots_data[1]
+    plot_data = plots_data[0]
     ax.plot(plot_data[0][0], plot_data[1], color=COLOR_2)
 
     ax.legend(

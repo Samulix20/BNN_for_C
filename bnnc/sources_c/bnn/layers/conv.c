@@ -21,8 +21,8 @@ void bnn_conv2D_valid_ReLU (
 
 		idx = flat_idx_4d(t,0,0,0, kernel_size, kernel_size, tlen);
 
-		Mu_t* t_q_mu = &(mu_kernels[idx]);
-		Sigma_t* t_q_sigma = &(sigma_kernels[idx]);
+		Mu_t* t_q_mu = mu_kernels + idx;
+		Sigma_t* t_q_sigma = sigma_kernels + idx;
 		Iop_t q_bias = (Iop_t) v_q_bias[t];
 
 		// for each submatrix
@@ -101,8 +101,8 @@ void bnn_conv2D_same_ReLU (
 
 		idx = flat_idx_4d(t,0,0,0, kernel_size, kernel_size, tlen);
 
-		Mu_t* t_q_mu = &(mu_kernels[idx]);
-		Sigma_t* t_q_sigma = &(sigma_kernels[idx]);
+		Mu_t* t_q_mu = mu_kernels + idx;
+		Sigma_t* t_q_sigma = sigma_kernels + idx;
         Iop_t q_bias = (Iop_t) v_q_bias[t]; 
 
 		// for each submatrix

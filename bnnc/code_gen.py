@@ -5,7 +5,7 @@ import numpy as np
 import numpy.typing as npt
 
 import os
-bnnc_c_sources_abspath = f"{os.path.dirname(__file__)}/sources_c"
+c_sources_abspath = f"{os.path.dirname(__file__)}/sources_c"
 
 C_DATA_TYPE_RANGES = { 
     "uint8":  [0,        2**8 - 1],
@@ -22,12 +22,12 @@ C_FUNCTION_NAMES = {
     "MaxPool2D": "layer_max_pooling2D"
 }
 
-def saturate_to_data_type(x: npt.NDArray, data_type: str):
+def saturate_to_data_type(x: npt.NDArray, data_type: str) -> npt.NDArray:
     drange = C_DATA_TYPE_RANGES[data_type]
     return np.clip(x, drange[0], drange[1]).astype(int)
 
 # Returns C code string from array
-def ndarray_to_c(array, name, fbits, data_type):
+def ndarray_to_c(array: npt.NDArray, name: str, fbits: int, data_type: str) -> str:
     tofixed = 2**fbits
 
     if len(array.shape) >= 3:
@@ -73,18 +73,18 @@ def ndarray_to_c(array, name, fbits, data_type):
 
 
 
-def layer_id(m: ModelInfo, l: LayerInfo):
+def layer_id(m: ModelInfo, l: LayerInfo) -> str:
     return f"{m.name}_{l.name}"
 
 
 
-def model_internal_buffer_id(m: ModelInfo):
+def model_internal_buffer_id(m: ModelInfo) -> str:
     return f"{m.name}_internal_buffer"
 
-def model_internal_buffer_end_id(m: ModelInfo):
+def model_internal_buffer_end_id(m: ModelInfo) -> str:
     return f"{model_internal_buffer_id(m)}_end"
 
-def create_model_internal_buffers(m: ModelInfo):
+def create_model_internal_buffers(m: ModelInfo) -> str:
     r = ""
     r += f"Data_t {model_internal_buffer_id(m)}[{m.max_buffer_required}];\n"
     r += f"Data_t* const {model_internal_buffer_end_id(m)} = {model_internal_buffer_id(m)} + {m.max_buffer_required};\n\n"
@@ -92,7 +92,7 @@ def create_model_internal_buffers(m: ModelInfo):
 
 
 
-def buffer_end_ptr(m: ModelInfo, v: int):
+def buffer_end_ptr(m: ModelInfo, v: int) -> str:
     return f"{model_internal_buffer_end_id(m)} {v}"
 
 def l_ptr(m: ModelInfo, v: int):
@@ -101,7 +101,7 @@ def l_ptr(m: ModelInfo, v: int):
     else:
         return model_internal_buffer_id(m)
 
-def layer_inout_ptrs(m: ModelInfo, l: LayerInfo):
+def layer_inout_ptrs(m: ModelInfo, l: LayerInfo) -> str:
     r = ""
     lid = layer_id(m, l)
     
@@ -114,7 +114,7 @@ def layer_inout_ptrs(m: ModelInfo, l: LayerInfo):
 
     return r
 
-def get_layer_input_ptr(m: ModelInfo, l: LayerInfo):
+def get_layer_input_ptr(m: ModelInfo, l: LayerInfo) -> str:
     lid = layer_id(m, l)
     if l.is_input:
         return "data_in"
@@ -123,12 +123,12 @@ def get_layer_input_ptr(m: ModelInfo, l: LayerInfo):
 
 
 
-def layer_weight_buffers(m: ModelInfo, l: LayerInfo):
+def layer_weight_buffers(m: ModelInfo, l: LayerInfo) -> str:
     r = ""
     lid = layer_id(m, l)
-    r += ndarray_to_c(l.mu_buffer, f"{lid}_mu_buffer", 8, "int32")
-    r += ndarray_to_c(l.sigma_buffer, f"{lid}_sigma_buffer", 8, "int32")
-    r += ndarray_to_c(l.mu_bias, f"{lid}_mu_bias", 8, "int32")
+    r += ndarray_to_c(l.mu_buffer, f"{lid}_mu_buffer", m.fixed_bits, "int32")
+    r += ndarray_to_c(l.sigma_buffer, f"{lid}_sigma_buffer", m.fixed_bits, "int32")
+    r += ndarray_to_c(l.mu_bias, f"{lid}_mu_bias", m.fixed_bits, "int32")
     #r += ndarray_to_c(l.sigma_bias, f"{lid}_sigma_bias", 8, "int32")
     return r
 
@@ -141,7 +141,7 @@ MODEL_WEIGHTS_INCLUDES = """
 #include <bnn/types.h>
 """
 
-def model_to_c(model: ModelInfo):
+def model_to_c(model: ModelInfo) -> tuple[str,str]:
 
     model_buffers_ptrs = ""
     model_weights = ""
@@ -204,3 +204,14 @@ def model_to_c(model: ModelInfo):
     model_weights = f"{MODEL_WEIGHTS_INCLUDES}\n{model_weights}"
 
     return model_hdr, model_weights
+
+def data_to_c(data: npt.NDArray, fixed_bits: int) -> str:
+    # data [num_data x num_features]
+
+    num_data, num_features = data.shape
+    c_data = ndarray_to_c(data, "data_matrix", fixed_bits, "int32")
+
+    r = "#include <bnn/types.h>\n"
+    r += f"#define NUM_DATA {num_data}\n#define FEATURES_PER_DATA {num_features}"
+
+    return f"{r}\n\n{c_data}"

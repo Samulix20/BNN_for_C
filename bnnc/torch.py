@@ -8,7 +8,12 @@ from bayesian_torch.layers.flipout_layers import conv_flipout as bnn_conv, linea
 from .model_info import *
 
 
-def info_from_model(model: nn.Module, name: str):
+def info_from_model(model: nn.Module, name: str) -> ModelInfo:
+    """
+    Model linear layers must be trained with a flattened input tensor with shape
+    [width x height x channels]. Care by default PyTorch layers use shape
+    [channels x width x height]
+    """
 
     model_info = ModelInfo(name)
     for n, t in model.named_modules():
@@ -41,7 +46,7 @@ def info_from_model(model: nn.Module, name: str):
             l.out_channels = t.out_channels
             # Buffers
             l.mu_buffer = t.mu_kernel.permute((0,2,3,1)).detach().numpy()
-            l.sigma_buffer = F.softplus(t.rho_kernel.permute((0,2,3,1))).detach().numpy()
+            l.sigma_buffer = F.softplus(t.rho_kernel).permute((0,2,3,1)).detach().numpy()
             l.mu_bias = t.mu_bias.detach().numpy()
             l.sigma_bias = F.softplus(t.rho_bias).detach().numpy()
         elif isinstance(t, bnn_linear.LinearFlipout):

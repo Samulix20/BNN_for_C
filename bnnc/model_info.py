@@ -27,6 +27,7 @@ class ModelInfo:
         self.layers: list[LayerInfo] = []
         self.max_buffer_required = 0
         self.name = name
+        self.fixed_bits = 12
 
     def prune(self):
         aux = []
@@ -35,7 +36,7 @@ class ModelInfo:
                 aux.append(l)
         self.layers = aux
 
-    def buffer_info(self):
+    def print_info(self):
         print(f"Max Buffer {self.max_buffer_required}")
         for l in self.layers:
             l.buffer_info()

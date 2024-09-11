@@ -6,9 +6,9 @@
 #define BNN_BIAS_DT         int32
 #define BNN_DATA_DT         int32
 
-#define BNN_SCALE_FACTOR 8
+#define BNN_SCALE_FACTOR 12
 #define BNN_INTERNAL_GEN 0
 
-#define BNN_MC_PASSES 1
+#define BNN_MC_PASSES 100
 
 #endif

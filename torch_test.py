@@ -13,16 +13,34 @@ import numpy as np
 import bnnc
 import bnnc.torch
 
-class Net(nn.Module):
+class AppArgs:
     def __init__(self):
+        self.train_batch_size = 100
+        self.num_mc_train = 1
+        self.num_mc_validation = 100
+        self.num_epochs = 10
+        self.learning_rate = 0.001
+        self.dataset = "CIFAR10"
+        self.num_workers = 20
+
+    def model_path(self):
+        return f"Model/bnn_{self.dataset}"
+
+class Net(nn.Module):
+
+    FC_INPUTS = {
+        "CIFAR10": 12544,
+        "MNIST": 9216
+    }
+
+    def __init__(self, args: AppArgs):
         super(Net, self).__init__()
         self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.relu1 = nn.ReLU()
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
         self.relu2 = nn.ReLU()
         self.mp1 = nn.MaxPool2d(2)
-        self.flat1 = nn.Flatten(start_dim=1)
-        self.fc1 = nn.Linear(16384, 128)
+        self.fc1 = nn.Linear(self.FC_INPUTS[args.dataset], 128)
         self.relu3 = nn.ReLU()
         self.fc2 = nn.Linear(128, 10)
         self.logsfm1 = nn.LogSoftmax(dim=1)
@@ -31,7 +49,7 @@ class Net(nn.Module):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.max_pool2d(x, 2)
-        x = torch.flatten(x, 1)
+        x = x.permute((0,2,3,1)).flatten(1)
         x = F.relu(self.fc1(x))
         x = F.log_softmax(self.fc2(x), dim=1)
         return x
@@ -94,7 +112,7 @@ def cuda_dev():
         device = torch.device("cpu")
     return device
 
-def create_model():
+def create_model(args: AppArgs):
     const_bnn_prior_parameters = {
         "prior_mu": 0.0,
         "prior_sigma": 1.0,
@@ -104,41 +122,38 @@ def create_model():
         "moped_enable": False,  # True to initialize mu/sigma from the pretrained dnn weights
         "moped_delta": 0.5,
     }
-    model = Net()
+    model = Net(args)
     dnn_to_bnn(model, const_bnn_prior_parameters)
     return model
 
 def load_model(args):
-    model = create_model()
-    model.load_state_dict(torch.load(args.model_path, weights_only=True))
+    model = create_model(args)
+    model.load_state_dict(torch.load(args.model_path(), weights_only=True))
     return model
 
-class AppArgs:
-    train_batch_size = 100
-    num_mc_train = 1
-    num_mc_validation = 100
-    num_epochs = 3
-    model_path = "Model/bnn_cifar10"
-    learning_rate = 0.001
+
+def get_data(args: AppArgs):
+    transform = transforms.Compose([
+        transforms.Grayscale(num_output_channels=1),
+        transforms.ToTensor()  
+    ])
+
+    train_data = vars(torchvision.datasets)[args.dataset]('Data', train=True, download=True, transform=transform)
+    test_data = vars(torchvision.datasets)[args.dataset]('Data', train=False, transform=transform)
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.train_batch_size)
+    test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+
+    return (train_data, train_loader, test_data, test_loader)
 
 def main_train():
     args = AppArgs()
     args.num_mc = args.num_mc_train
 
     device = cuda_dev()
-    model = create_model()
+    model = create_model(args)
     model.to(device)
 
-    transform = transforms.Compose([
-        transforms.Grayscale(num_output_channels=1),
-        transforms.ToTensor()  
-    ])
-
-    train_data = torchvision.datasets.CIFAR10('Data', train=True, download=True, transform=transform)
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=args.train_batch_size)
-
-    test_data = torchvision.datasets.CIFAR10('Data', train=False, transform=transform)
-    test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+    train_data, train_loader, test_data , test_loader = get_data(args)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=args.learning_rate)
 
@@ -146,7 +161,7 @@ def main_train():
         train(args, model, device, train_loader, optimizer, epoch)
         test(args, model, device, test_loader, f"Epoch {epoch}")
 
-    torch.save(model.state_dict(), args.model_path)
+    torch.save(model.state_dict(), args.model_path())
 
 def main_validate():
     args = AppArgs()
@@ -156,13 +171,7 @@ def main_validate():
     model = load_model(args)
     model.to(device)
 
-    transform = transforms.Compose([
-        transforms.Grayscale(num_output_channels=1),
-        transforms.ToTensor()  
-    ])
-
-    test_data = torchvision.datasets.CIFAR10('Data', train=False, transform=transform)
-    test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+    train_data, train_loader, test_data , test_loader = get_data(args)
 
     preds = test(args, model, device, test_loader, "Validation").cpu().numpy()
     targets = np.array(test_data.targets)
@@ -177,31 +186,107 @@ def panic(msg="ERROR"):
     print(msg)
     exit(1)
 
+def parse_predictions(c_prediction_path):
+    df = read_csv(c_prediction_path)
+    bgm = []
+    mc_samples = df["mcpass"].max() + 1
+    for i in range(mc_samples):
+        bgm.append(df[(df["mcpass"] == i)].filter(regex="class").values)
+    return np.array(bgm)
+
 import os
+import subprocess
+from pandas import read_csv
+from multiprocessing import Pool
+from io import StringIO
+
+def parallel_c(x):
+    i, data = x
+    worker_folder = f"Code/worker_{i}"
+
+    os.system(f"""
+        rm -rf {worker_folder}
+        mkdir -p {worker_folder}
+        cp -r {bnnc.code_gen.c_sources_abspath}/bnn {worker_folder}
+        cp {bnnc.code_gen.c_sources_abspath}/Makefile {worker_folder}
+        cp {bnnc.code_gen.c_sources_abspath}/test_main.c {worker_folder}/main.c
+        cp Code/bnn_model.h {worker_folder}
+        cp Code/bnn_model_weights.h {worker_folder}
+    """)
+
+    d = bnnc.code_gen.data_to_c(data, 12)
+    with open(f"{worker_folder}/test_data.h", "w") as f:
+        f.write(d)
+
+    os.system(f"""
+        cd {worker_folder}
+        make main > run.log
+    """)
+
+    return parse_predictions(f"{worker_folder}/run.log")
 
 def main_info():
     args = AppArgs()
     model = load_model(args)
+    train_data, train_loader, test_data, test_loader = get_data(args)
+
+    for data, targets in test_loader:
+        pass
+    data = data.permute((0,2,3,1))
+    input_shape = np.array(data[0].shape)
+    flat_data = data.numpy().reshape((data.shape[0], -1))
 
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
-    model_info.calculate_buffers(np.array([32, 32, 1]))
+    model_info.calculate_buffers(input_shape)
 
     h, w = bnnc.code_gen.model_to_c(model_info)
     with open("Code/bnn_model.h", "w") as f:
         f.write(h)
     with open("Code/bnn_model_weights.h", "w") as f:
         f.write(w)
-    
-    os.system(f"""
-        rm -rf Code/bnn
-        cp -r {bnnc.code_gen.bnnc_c_sources_abspath}/bnn Code/bnn
-        cp {bnnc.code_gen.bnnc_c_sources_abspath}/test_main.c Code/main.c
-        cd Code
-        make main
-    """)
 
+    split_data = np.split(flat_data[:args.num_workers*30], args.num_workers)
+
+    with Pool(args.num_workers) as p:
+        work = []
+        for i, data in enumerate(split_data):
+            work.append((i+1, data))
+
+        preds = np.concatenate(p.map(parallel_c, work), 1)
+        preds[preds < 0] = 0
+
+    np.savez("Code/predictions", preds)
+
+def main_pred_test():
+    args = AppArgs()
+    args.num_mc = args.num_mc_validation
+
+    device = cuda_dev()
+
+    model = load_model(args)
+    model.to(device)
+
+    train_data, train_loader, test_data, test_loader = get_data(args)
+    for data, targets in test_loader:
+        pass
+    targets = targets[:args.num_workers*30]
+
+    preds = test(args, model, device, test_loader, "Validation").cpu().numpy()[:,:args.num_workers*30,:]
+    pydata = (*bnnc.uncertainty.analyze_predictions(preds, targets), preds)
+
+    print(bnnc.uncertainty.accuracy(pydata[0]))
+
+    preds = np.load("Code/predictions.npz")["arr_0"]
+    cdata = (*bnnc.uncertainty.analyze_predictions(preds, targets), preds)
+
+    print(bnnc.uncertainty.accuracy(cdata[0]))
+
+    print(bnnc.uncertainty.match_ratio(cdata[0], pydata[0]))
+
+    bnnc.plot.compare_predictions_plots(pydata, cdata, targets, "Figures")
 
 if __name__ == "__main__":
     #main_train()
     #main_validate()
     main_info()
+    main_pred_test()
