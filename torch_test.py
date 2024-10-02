@@ -21,16 +21,58 @@ class AppArgs:
         self.train_batch_size = 100
         self.num_mc_train = 1
         self.num_mc_validation = 100
-        self.num_epochs = 10
+        self.num_epochs = 50
         self.learning_rate = 0.001
         self.dataset = "CIFAR10"
+        self.model_name = "B2N2"
         self.num_workers = 20
-        self.max_img_per_worker = 500
+        self.max_img_per_worker = 100
 
     def model_path(self):
-        return f"Model/bnn_{self.dataset}"
+        return f"Model/bnn_{self.model_name}_{self.dataset}_{self.num_epochs}"
 
-class Net(nn.Module):
+class B2N2(nn.Module):
+
+    FC_INPUTS = {
+        "CIFAR10": 2048,
+        "MNIST": 1152
+    }
+
+    def __init__(self, args: AppArgs):
+        super(B2N2, self).__init__()
+        self.conv1 = nn.Conv2d(1, 32, 3, 1, "same")
+        self.relu1 = nn.ReLU()
+        self.conv2 = nn.Conv2d(32, 32, 3, 1, "same")
+        self.relu2 = nn.ReLU()
+        self.mp1 = nn.MaxPool2d(2)
+        self.conv3 = nn.Conv2d(32, 64, 3, 1, "same")
+        self.relu3 = nn.ReLU()
+        self.conv4 = nn.Conv2d(64, 64, 3, 1, "same")
+        self.relu4 = nn.ReLU()
+        self.mp2 = nn.MaxPool2d(2)
+        self.conv5 = nn.Conv2d(64, 128, 3, 1, "same")
+        self.relu5 = nn.ReLU()
+        self.conv6 = nn.Conv2d(128, 128, 3, 1, "same")
+        self.relu6 = nn.ReLU()
+        self.mp3 = nn.MaxPool2d(2)
+        self.fc1 = nn.Linear(self.FC_INPUTS[args.dataset], 10)
+        self.logsfm1 = nn.LogSoftmax(dim=1)
+    
+    def forward(self, x):
+        x = F.relu(self.conv1(x))
+        x = F.relu(self.conv2(x))
+        x = self.mp1(x)
+        x = F.relu(self.conv3(x))
+        x = F.relu(self.conv4(x))
+        x = self.mp2(x)
+        x = F.relu(self.conv5(x))
+        x = F.relu(self.conv6(x))
+        x = self.mp3(x)
+        x = x.permute((0,2,3,1)).flatten(1)
+        x = self.logsfm1(self.fc1(x))
+        return x
+
+class LENET(nn.Module):
 
     FC_INPUTS = {
         "CIFAR10": 12544,
@@ -38,7 +80,7 @@ class Net(nn.Module):
     }
 
     def __init__(self, args: AppArgs):
-        super(Net, self).__init__()
+        super(LENET, self).__init__()
         self.conv1 = nn.Conv2d(1, 32, 3, 1)
         self.relu1 = nn.ReLU()
         self.conv2 = nn.Conv2d(32, 64, 3, 1)
@@ -57,6 +99,11 @@ class Net(nn.Module):
         x = F.relu(self.fc1(x))
         x = F.log_softmax(self.fc2(x), dim=1)
         return x
+
+MODEL_NAMES = {
+    "LENET": LENET,
+    "B2N2": B2N2
+}
 
 def train(args, model, device, train_loader, optimizer, epoch):
     model.train()
@@ -126,7 +173,7 @@ def create_model(args: AppArgs):
         "moped_enable": False,  # True to initialize mu/sigma from the pretrained dnn weights
         "moped_delta": 0.5,
     }
-    model = Net(args)
+    model = MODEL_NAMES[args.model_name](args)
     dnn_to_bnn(model, const_bnn_prior_parameters)
     return model
 
@@ -214,6 +261,7 @@ def parallel_c(x: tuple[int, npt.NDArray, bnnc.model_info.ModelInfo]):
         cp -r {bnnc.model_info.c_sources_abspath}/bnn {worker_folder}
         cp {bnnc.model_info.c_sources_abspath}/Makefile {worker_folder}
         cp {bnnc.model_info.c_sources_abspath}/test_main.c {worker_folder}/main.c
+        cp Code/bnn_config.h {worker_folder}
         cp Code/bnn_model.h {worker_folder}
         cp Code/bnn_model_weights.h {worker_folder}
     """)
@@ -243,13 +291,18 @@ def main_info():
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
     model_info.calculate_buffers(input_shape)
 
-    h, w = model_info.create_c_code()
+    model_info.uniform_weight_transform()
+
+    l, h, w = model_info.create_c_code()
+    with open("Code/bnn_config.h", "w") as f:
+        f.write(l)
     with open("Code/bnn_model.h", "w") as f:
         f.write(h)
     with open("Code/bnn_model_weights.h", "w") as f:
         f.write(w)
 
-    split_data = np.split(flat_data[:args.num_workers * args.max_img_per_worker], args.num_workers)
+    num_targets = args.num_workers * args.max_img_per_worker
+    split_data = np.split(flat_data[:num_targets], args.num_workers)
 
     with Pool(args.num_workers) as p:
         work = []
@@ -257,10 +310,11 @@ def main_info():
             work.append((i+1, data, model_info))
 
         time_start = time.time()
+        print(f"{time.strftime("%H:%M:%S", time.localtime(time_start))} -- Starting C predictions")
         preds = np.concatenate(p.map(parallel_c, work), 1)
         preds[preds < 0] = 0
-        elapsed_time = time.gmtime(time.time() - time_start)
-        print(f"C preditions done in {time.strftime("%H:%M:%S", elapsed_time)} using {args.num_workers} threads")
+        elapsed_time = time.strftime("%H:%M:%S", time.gmtime(time.time() - time_start))
+        print(f"{num_targets} img C preditions done in {elapsed_time} using {args.num_workers} threads")
         np.savez("Code/predictions", preds)
 
 def main_pred_test():
@@ -294,7 +348,7 @@ def main_pred_test():
     bnnc.plot.compare_predictions_plots(pydata, cdata, targets, "Figures")
 
 if __name__ == "__main__":
-    #main_train()
-    #main_validate()
-    main_info()
-    main_pred_test()
+    main_train()
+    main_validate()
+    #main_info()
+    #main_pred_test()

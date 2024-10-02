@@ -25,6 +25,11 @@ C_FUNCTION_NAMES = {
     "MaxPool2D": "layer_max_pooling2D"
 }
 
+C_INTERNAL_GENERATORS = {
+    "Normal": 0,
+    "Uniform": 1
+}
+
 def to_fixed(arr: npt.NDArray, fbits: int) -> npt.NDArray:
     return (arr * (2**fbits)).astype(int)
 
@@ -85,6 +90,8 @@ class ModelInfo:
         self.layers: list[LayerInfo] = []
         self.max_buffer_required = 0
         self.name = name
+        # C Info
+        self.mc_passes = 100
         self.gen_mode = "Normal"
         self.fixed_bits = 12
         self.data_types = {
@@ -216,16 +223,29 @@ class ModelInfo:
             data_range[2] = update_data_range(data_range[2], l.mu_bias)
             # Data range b sigma (Not yet supported)
 
-    def create_c_code(self) -> tuple[str,str]:
+    def create_lib_config(self) -> str:
+        lib_config = ""
+        lib_config += "#ifndef BNN_CONFIG_H\n"
+        lib_config += "#define BNN_CONFIG_H\n"
+        lib_config += f"#define BNN_SIGMA_DT        {self.data_types["SIGMA"]}\n"
+        lib_config += f"#define BNN_MU_DT           {self.data_types["MU"]}\n"
+        lib_config += f"#define BNN_BIAS_DT         {self.data_types["BIAS"]}\n"
+        lib_config += f"#define BNN_DATA_DT         {self.data_types["DATA"]}\n"
+        lib_config += f"#define BNN_SCALE_FACTOR {self.fixed_bits}\n"
+        lib_config += f"#define BNN_INTERNAL_GEN {C_INTERNAL_GENERATORS[self.gen_mode]}\n"
+        lib_config += f"#define BNN_MC_PASSES {self.mc_passes}\n"
+        lib_config += "#endif\n"
+        return lib_config
+
+    def create_c_code(self) -> tuple[str,str,str]:
         # find data range/type
         
+        lib_config = self.create_lib_config()
+
         model_buffers_ptrs = ""
         model_weights = ""
         model_fcall = f"Data_t* {self.name}_inference(Data_t* data_in) {{\n"
         model_buffers_ptrs += self.create_internal_buffers()
-
-        if self.gen_mode == "Uniform":
-            print("Uniform")
 
         for l in self.layers:
             lid = l.layer_id(self)
@@ -282,7 +302,7 @@ class ModelInfo:
         model_hdr = f"#include <bnn/layers.h>\n{model_buffers_ptrs}\n{model_fcall}"
         model_weights = f"#include <bnn/types.h>\n{model_weights}"
 
-        return model_hdr, model_weights
+        return lib_config, model_hdr, model_weights
 
     def create_c_data(self, data: npt.NDArray) -> str:
         # data [num_data x num_features]
