@@ -9,9 +9,12 @@ import torchvision
 from torchvision import transforms
 
 import numpy as np
+import numpy.typing as npt
 
 import bnnc
 import bnnc.torch
+
+import time
 
 class AppArgs:
     def __init__(self):
@@ -22,6 +25,7 @@ class AppArgs:
         self.learning_rate = 0.001
         self.dataset = "CIFAR10"
         self.num_workers = 20
+        self.max_img_per_worker = 500
 
     def model_path(self):
         return f"Model/bnn_{self.dataset}"
@@ -200,21 +204,21 @@ from pandas import read_csv
 from multiprocessing import Pool
 from io import StringIO
 
-def parallel_c(x):
-    i, data = x
+def parallel_c(x: tuple[int, npt.NDArray, bnnc.model_info.ModelInfo]):
+    i, data, model_info = x
     worker_folder = f"Code/worker_{i}"
 
     os.system(f"""
         rm -rf {worker_folder}
         mkdir -p {worker_folder}
-        cp -r {bnnc.code_gen.c_sources_abspath}/bnn {worker_folder}
-        cp {bnnc.code_gen.c_sources_abspath}/Makefile {worker_folder}
-        cp {bnnc.code_gen.c_sources_abspath}/test_main.c {worker_folder}/main.c
+        cp -r {bnnc.model_info.c_sources_abspath}/bnn {worker_folder}
+        cp {bnnc.model_info.c_sources_abspath}/Makefile {worker_folder}
+        cp {bnnc.model_info.c_sources_abspath}/test_main.c {worker_folder}/main.c
         cp Code/bnn_model.h {worker_folder}
         cp Code/bnn_model_weights.h {worker_folder}
     """)
 
-    d = bnnc.code_gen.data_to_c(data, 12)
+    d = model_info.create_c_data(data)
     with open(f"{worker_folder}/test_data.h", "w") as f:
         f.write(d)
 
@@ -239,23 +243,25 @@ def main_info():
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
     model_info.calculate_buffers(input_shape)
 
-    h, w = bnnc.code_gen.model_to_c(model_info)
+    h, w = model_info.create_c_code()
     with open("Code/bnn_model.h", "w") as f:
         f.write(h)
     with open("Code/bnn_model_weights.h", "w") as f:
         f.write(w)
 
-    split_data = np.split(flat_data[:args.num_workers*30], args.num_workers)
+    split_data = np.split(flat_data[:args.num_workers * args.max_img_per_worker], args.num_workers)
 
     with Pool(args.num_workers) as p:
         work = []
         for i, data in enumerate(split_data):
-            work.append((i+1, data))
+            work.append((i+1, data, model_info))
 
+        time_start = time.time()
         preds = np.concatenate(p.map(parallel_c, work), 1)
         preds[preds < 0] = 0
-
-    np.savez("Code/predictions", preds)
+        elapsed_time = time.gmtime(time.time() - time_start)
+        print(f"C preditions done in {time.strftime("%H:%M:%S", elapsed_time)} using {args.num_workers} threads")
+        np.savez("Code/predictions", preds)
 
 def main_pred_test():
     args = AppArgs()
@@ -266,12 +272,14 @@ def main_pred_test():
     model = load_model(args)
     model.to(device)
 
+    num_targets = args.num_workers * args.max_img_per_worker
+
     train_data, train_loader, test_data, test_loader = get_data(args)
     for data, targets in test_loader:
         pass
-    targets = targets[:args.num_workers*30]
+    targets = targets[:num_targets]
 
-    preds = test(args, model, device, test_loader, "Validation").cpu().numpy()[:,:args.num_workers*30,:]
+    preds = test(args, model, device, test_loader, "Validation").cpu().numpy()[:,:num_targets,:]
     pydata = (*bnnc.uncertainty.analyze_predictions(preds, targets), preds)
 
     print(bnnc.uncertainty.accuracy(pydata[0]))
