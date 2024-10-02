@@ -26,7 +26,7 @@ class AppArgs:
         self.dataset = "CIFAR10"
         self.model_name = "B2N2"
         self.num_workers = 20
-        self.max_img_per_worker = 100
+        self.max_img_per_worker = 10
 
     def model_path(self):
         return f"Model/bnn_{self.model_name}_{self.dataset}_{self.num_epochs}"
@@ -291,7 +291,8 @@ def main_info():
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
     model_info.calculate_buffers(input_shape)
 
-    model_info.uniform_weight_transform()
+    #model_info.uniform_weight_transform()
+    model_info.bernoulli_weight_transform()
 
     l, h, w = model_info.create_c_code()
     with open("Code/bnn_config.h", "w") as f:
@@ -348,7 +349,7 @@ def main_pred_test():
     bnnc.plot.compare_predictions_plots(pydata, cdata, targets, "Figures")
 
 if __name__ == "__main__":
-    main_train()
-    main_validate()
-    #main_info()
-    #main_pred_test()
+    #main_train()
+    #main_validate()
+    main_info()
+    main_pred_test()

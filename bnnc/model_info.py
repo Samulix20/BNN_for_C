@@ -27,7 +27,8 @@ C_FUNCTION_NAMES = {
 
 C_INTERNAL_GENERATORS = {
     "Normal": 0,
-    "Uniform": 1
+    "Uniform": 1,
+    "Bernoulli": 3
 }
 
 def to_fixed(arr: npt.NDArray, fbits: int) -> npt.NDArray:
@@ -199,6 +200,19 @@ class ModelInfo:
 
             l.sigma_buffer = b
             l.mu_buffer = a
+
+    def bernoulli_weight_transform(self):
+        self.gen_mode = "Bernoulli"
+
+        for l in self.layers:
+            if l.type not in ["Conv2D", "Linear"]:
+                continue
+
+            p = l.mu_buffer**2 / (l.mu_buffer**2 + l.sigma_buffer**2)
+            q = (l.mu_buffer**2 + l.sigma_buffer**2) / l.mu_buffer
+
+            l.sigma_buffer = q
+            l.mu_buffer = p
 
     def to_fixed(self):
         for l in self.layers:
