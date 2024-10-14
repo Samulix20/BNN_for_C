@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.typing as npt
 
-from math import sqrt
+from math import sqrt, log2, ceil
 
 import os
 c_sources_abspath = f"{os.path.dirname(__file__)}/sources_c"
@@ -31,6 +31,21 @@ C_INTERNAL_GENERATORS = {
     "Bernoulli": 3
 }
 
+def get_datatype(signed: bool, max_val: int) -> str:
+    bits = ceil(log2(max_val))
+    dt = ""
+    if signed:
+        bits += 1
+    if bits <= 8:
+        dt = "int8"
+    elif bits <= 16:
+        dt = "int16"
+    else:
+        dt = "int32"
+    if not signed:
+        dt = "u" + dt
+    return dt
+
 def to_fixed(arr: npt.NDArray, fbits: int) -> npt.NDArray:
     return (arr * (2**fbits)).astype(int)
 
@@ -46,8 +61,7 @@ def update_data_range(prev_range: tuple[float,float], arr: npt.NDArray) -> tuple
         return (min(min_v, np.min(arr)), max(max_v, np.max(arr)))
 
 # Returns C code string from array
-def ndarray_to_c(array: npt.NDArray, name: str, fbits: int, data_type: str) -> str:
-    tofixed = 2**fbits
+def ndarray_to_c(array: npt.NDArray, name: str, data_type: str) -> str:
 
     text = f'// Array {len(array.shape)}D {array.shape}\n'
 
@@ -57,7 +71,7 @@ def ndarray_to_c(array: npt.NDArray, name: str, fbits: int, data_type: str) -> s
     text += f'{data_type} {name}[{np.prod(array.shape)}] = ' + '{'
     f = array.flatten()
     for v in f:
-        aux = saturate_to_data_type(v * tofixed, data_type)
+        aux = saturate_to_data_type(v, data_type)
         text += f'{aux + 0}, '
     text = text[:-2]
     text += '};\n'
@@ -94,14 +108,25 @@ class ModelInfo:
         # C Info
         self.mc_passes = 100
         self.gen_mode = "Normal"
-        self.fixed_bits = 12
+        self.fixed_bits = 10
         self.data_types = {
             "MU": "int32",
             "SIGMA": "int32",
             "BIAS": "int32",
             "DATA": "int32"
         }
-    
+
+    def print_cinfo(self):
+        print(f"Fixed Bits: {self.fixed_bits}")
+        print(f"Data Types: {self.data_types}")
+        print(f"Generation Mode: {self.gen_mode}")
+
+    def print_buffer_info(self):
+        print(f"Max Buffer: {self.max_buffer_required}")
+        for l in self.layers:
+            l.layer_info()
+            l.buffer_info()
+
     def internal_buffer_id(self) -> str:
         return f"{self.name}_internal_buffer"
 
@@ -131,15 +156,6 @@ class ModelInfo:
             if l.type != None:
                 aux.append(l)
         self.layers = aux
-
-    def print_info(self):
-        print(f"Max Buffer {self.max_buffer_required}")
-        for l in self.layers:
-            l.buffer_info()
-
-    def layer_info(self):
-        for l in self.layers:
-            l.layer_info()
 
     def fuse_activations(self):
         for i, l in enumerate(self.layers):
@@ -236,6 +252,12 @@ class ModelInfo:
             # Data range b mu
             data_range[2] = update_data_range(data_range[2], l.mu_bias)
             # Data range b sigma (Not yet supported)
+        
+        for (min_v, max_v), t in zip(data_range, ["MU", "SIGMA", "BIAS"]):
+            signed = min_v < 0
+            absmax_v = max(abs(min_v), max_v)
+            self.data_types[t] = get_datatype(signed, absmax_v)
+
 
     def create_lib_config(self) -> str:
         lib_config = ""
@@ -253,7 +275,9 @@ class ModelInfo:
 
     def create_c_code(self) -> tuple[str,str,str]:
         # find data range/type
-        
+        self.to_fixed()
+        self.find_data_types()
+
         lib_config = self.create_lib_config()
 
         model_buffers_ptrs = ""
@@ -324,7 +348,7 @@ class ModelInfo:
         # find data range/type
 
         num_data, num_features = data.shape
-        c_data = ndarray_to_c(data, "data_matrix", self.fixed_bits, "int32")
+        c_data = ndarray_to_c(to_fixed(data, self.fixed_bits,), "data_matrix", "int32")
 
         r = "#include <bnn/types.h>\n"
         r += f"#define NUM_DATA {num_data}\n#define FEATURES_PER_DATA {num_features}"
@@ -392,12 +416,12 @@ class LayerInfo:
 
         return r
 
-    def create_weight_buffers(self, m):
+    def create_weight_buffers(self, m: ModelInfo):
         r = ""
         lid = self.layer_id(m)
-        r += ndarray_to_c(self.mu_buffer, f"{lid}_mu_buffer", m.fixed_bits, "int32")
-        r += ndarray_to_c(self.sigma_buffer, f"{lid}_sigma_buffer", m.fixed_bits, "int32")
-        r += ndarray_to_c(self.mu_bias, f"{lid}_mu_bias", m.fixed_bits, "int32")
+        r += ndarray_to_c(self.mu_buffer, f"{lid}_mu_buffer", m.data_types["MU"])
+        r += ndarray_to_c(self.sigma_buffer, f"{lid}_sigma_buffer", m.data_types["SIGMA"])
+        r += ndarray_to_c(self.mu_bias, f"{lid}_mu_bias", m.data_types["BIAS"])
         #r += ndarray_to_c(l.sigma_bias, f"{lid}_sigma_bias", 8, "int32")
         return r
 
