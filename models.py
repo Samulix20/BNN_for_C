@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+# Model definitions
+
 class BasicBlock(nn.Module):
     
     def __init__(self, layer: nn.Module, activation: str, flatten: bool = False, pool: nn.Module = None):
@@ -30,11 +32,47 @@ class BasicBlock(nn.Module):
         return x
 
 
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride):
+        super().__init__()
+
+        if stride == 1:
+            c1 = nn.Conv2d(in_channels, out_channels, 3, 1, "same")
+        else:
+            c1 = nn.Conv2d(in_channels, out_channels, 3, stride, 1)
+
+        self.conv1 = c1
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu1 = nn.ReLU()
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, 1, "same")
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.diff = in_channels != out_channels
+        if (self.diff):
+            self.extra_conv = c1
+
+        self.relu2 = nn.ReLU()
+
+    def forward(self, x):
+        y = self.conv1(x)
+        y = self.bn1(y)
+        y = self.relu1(y)
+        y = self.conv2(y)
+        y = self.bn2(y)
+
+        if(self.diff):
+            x = self.extra_conv(x)
+
+        y = x + y
+        y = self.relu2(y)
+        return y
+
+
 class B2N2(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.l1 = BasicBlock(nn.Conv2d(3, 32, 3, 1, "same"), "relu")
+        self.l1 = BasicBlock(nn.Conv2d(1, 32, 3, 1, "same"), "relu")
         self.l2 = BasicBlock(nn.Conv2d(32, 32, 3, 1, "same"), "relu", pool=nn.MaxPool2d(2))
         self.l3 = BasicBlock(nn.Conv2d(32, 64, 3, 1, "same"), "relu")
         self.l4 = BasicBlock(nn.Conv2d(64, 64, 3, 1, "same"), "relu", pool=nn.MaxPool2d(2))
@@ -55,16 +93,11 @@ class B2N2(nn.Module):
 
 class LENET(nn.Module):
 
-    FC_INPUTS = {
-        "CIFAR10": 12544,
-        "MNIST": 9216
-    }
-
-    def __init__(self, dataset: str):
+    def __init__(self):
         super().__init__()
         self.l1 = BasicBlock(nn.Conv2d(1, 32, 3, 1), "relu")
-        self.l2 = BasicBlock(nn.Conv2d(32, 64, 3, 1), "relu", nn.MaxPool2d(2))
-        self.l3 = BasicBlock(nn.Linear(self.FC_INPUTS[args.dataset], 128), "relu", flatten=True)
+        self.l2 = BasicBlock(nn.Conv2d(32, 64, 3, 1), "relu", pool=nn.MaxPool2d(2))
+        self.l3 = BasicBlock(nn.Linear(12544, 128), "relu", flatten=True)
         self.l4 = BasicBlock(nn.Linear(128, 10), "softmax")
 
     def forward(self, x):
@@ -84,41 +117,7 @@ class AddResidual(nn.Module):
         return x + y
 
 
-class RESNET_TINY_STACK(nn.Module):
-    def __init__(self, in_channels, out_channels, stride):
-        super().__init__()
 
-        if stride == 1:
-            c1 = nn.Conv2d(in_channels, out_channels, 3, 1, "same")
-        else:
-            c1 = nn.Conv2d(in_channels, out_channels, 3, stride, 1)
-
-        self.conv1 = c1
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu1 = nn.ReLU()
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, 1, "same")
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-        self.diff = in_channels != out_channels
-        if (self.diff):
-            self.extra_conv = c1
-
-        self.res = AddResidual()
-        self.relu2 = nn.ReLU()
-
-    def forward(self, x):
-        y = self.conv1(x)
-        y = self.bn1(y)
-        y = self.relu1(y)
-        y = self.conv2(y)
-        y = self.bn2(y)
-
-        if(self.diff):
-            x = self.extra_conv(x)
-
-        y = self.res(y, x)
-        y = self.relu2(y)
-        return y
 
 
 class RESNET_TINY(nn.Module):
@@ -130,9 +129,9 @@ class RESNET_TINY(nn.Module):
         self.bn0 = nn.BatchNorm2d(16)
         self.relu0 = nn.ReLU()
 
-        self.stack1 = RESNET_TINY_STACK(16, 16, 1)
-        self.stack2 = RESNET_TINY_STACK(16, 32, 2)
-        self.stack3 = RESNET_TINY_STACK(32, 64, 2)
+        self.stack1 = ResidualBlock(16, 16, 1)
+        self.stack2 = ResidualBlock(16, 32, 2)
+        self.stack3 = ResidualBlock(32, 64, 2)
 
         self.avg1 = nn.AvgPool2d(8)
         self.flat1 = nn.Flatten()

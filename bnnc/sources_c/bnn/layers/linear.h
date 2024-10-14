@@ -1,7 +1,6 @@
-#include "../activations.h"
-#include "../layers.h"
+#include "utils.h"
 
-void bnn_linear_ReLU(
+inline void bnn_linear_ReLU(
 	Sigma_t* m_q_sigma,
 	Mu_t* m_q_mu,
 	Bias_t* v_q_bias,
@@ -36,7 +35,7 @@ void bnn_linear_ReLU(
 }
 
 
-void bnn_linear_Softmax(
+inline void bnn_linear_Softmax(
 	Sigma_t* m_q_sigma,
 	Mu_t* m_q_mu,
 	Bias_t* v_q_bias,

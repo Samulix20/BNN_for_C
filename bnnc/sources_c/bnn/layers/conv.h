@@ -1,7 +1,6 @@
-#include "../activations.h"
-#include "../layers.h"
+#include "utils.h"
 
-void bnn_conv2D_valid_ReLU (
+inline void bnn_conv2D_valid_ReLU (
 	Data_t* t_q_input, 
     size_t ilen, size_t jlen, size_t tlen,
 	size_t num_filters, size_t kernel_size,
@@ -67,7 +66,7 @@ void bnn_conv2D_valid_ReLU (
 }
 
 
-void bnn_conv2D_same_ReLU (
+inline void bnn_conv2D_same_ReLU (
     Data_t* t_q_input, 
     size_t ilen, size_t jlen, size_t tlen,
 	size_t num_filters, size_t kernel_size,

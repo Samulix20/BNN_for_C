@@ -1,5 +1,5 @@
-#ifndef BNN_H
-#define BNN_H
+#ifndef BNN_ACTIVATIONS_H
+#define BNN_ACTIVATIONS_H
 
 #include "types.h"
 #include "random.h"
@@ -14,10 +14,17 @@ inline Softmax_t to_Softmax_t(const Iop_t v, const Scale_t S) {
 }
 
 #define TAYLOR_EXP_LOOKUP_TABLE_LEN    6
-extern const int32 EXP_TAYLOR_DENOM_F32_28[TAYLOR_EXP_LOOKUP_TABLE_LEN];
+// Lookup table f32_28 for (1/i!) i in [2,7]
+const int32 EXP_TAYLOR_DENOM_F32_28[TAYLOR_EXP_LOOKUP_TABLE_LEN] = {
+	134217728, 44739242, 11184810, 2236962, 372827, 53261
+};
 
 #define INTEGER_EXP_LOOKUP_TABLE_LEN    20
-extern const int32 INTEGER_EXP_LOOKUP_TABLE_F32_28[INTEGER_EXP_LOOKUP_TABLE_LEN];
+// Lookup table f32_28 for exp(i), i integer in [-19,0]
+const int32 INTEGER_EXP_LOOKUP_TABLE_F32_28[INTEGER_EXP_LOOKUP_TABLE_LEN] = {
+	268435456, 98751885, 36328788, 13364614, 4916566, 1808703, 665384, 
+	244781, 90050, 33127, 12186, 4483, 1649, 606, 223, 82, 30, 11, 4, 1,
+};
 
 // https://en.wikipedia.org/wiki/Taylor_series
 // Calculates exp function using the Taylor series approximation

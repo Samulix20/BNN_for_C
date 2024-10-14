@@ -4,6 +4,7 @@
 #include "types.h"
 
 #define DEFAULT_SEED 0xDEADBEEF
+uint32 bnn_random_seed = DEFAULT_SEED;
 
 // https://en.wikipedia.org/wiki/Xorshift
 inline uint32 xorshift32(uint32 seed) {
@@ -17,20 +18,18 @@ inline uint32 xorshift32(uint32 seed) {
 // Deprecated
 // Bernoulli sample scaled at S
 inline Iop_t bernoulli_sample(Scale_t S, Sigma_t q, Mu_t p) {
-    extern uint32 seed;
     // seed S = 32
-    seed = xorshift32(seed);
-    Mu_t scaled_sample =  (Mu_t) (seed >> (32 - S));
+    bnn_random_seed = xorshift32(bnn_random_seed);
+    Mu_t scaled_sample =  (Mu_t) (bnn_random_seed >> (32 - S));
     if (p > scaled_sample) return (Iop_t) q;
     else return 0;
 }
 
 // Uniform sample scaled at S
 inline Iop_t uniform_sample(Scale_t S) {
-    extern uint32 seed;
     // Seed can be iterpreted as scaled at S = 32
-    seed = xorshift32(seed);
-    return (Iop_t) (seed >> (32 - S));
+    bnn_random_seed = xorshift32(bnn_random_seed);
+    return (Iop_t) (bnn_random_seed >> (32 - S));
 }
 
 // Normal sample scaled at S using clt approximation

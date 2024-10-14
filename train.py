@@ -19,6 +19,9 @@ class ModelTrainLogger:
         self.folder = folder
         self.name = name
 
+    def next_epoch(self):
+        self.epoch += 1
+
     def save_model(self, model: nn.Module):
         torch.save(model.state_dict(), f"{self.folder}/{self.name}_{self.epoch - 1}")
 
@@ -29,7 +32,7 @@ class ModelTrainLogger:
         if self.best_train is None or loss < self.best_train:
             self.best_train = loss
             self.best_train_epoch = self.epoch
-        #print(f'Epoch {self.epoch} Train: Average loss: {loss:.4f}, Accuracy: {100. * acc:.2f}%')
+        print(f'+ Epoch {self.epoch} Train: Average loss: {loss:.4f}, Accuracy: {100. * acc:.2f}%')
 
     def log_test(self, model: nn.Module, loss, acc):
         if self.best_test is None or loss < self.best_test:
@@ -40,8 +43,7 @@ class ModelTrainLogger:
         else:
             self.test_worse += 1
 
-        print(f'Epoch {self.epoch} Test: Average loss: {loss:.4f}, Accuracy: {100. * acc:.2f}%')
-        self.epoch += 1
+        print(f'- Epoch {self.epoch} Test: Average loss: {loss:.4f}, Accuracy: {100. * acc:.2f}%')
 
     def info(self):
         print(f"Train Epoch {self.best_train_epoch} loss: {self.best_train:4f}")
@@ -57,6 +59,8 @@ class ModelTrainLogger:
 def get_batch_correct(model_output, target):
     pred = model_output.argmax(dim=1, keepdim=True)
     return pred.eq(target.view_as(pred)).sum().item()
+
+# Training utils
 
 def train(model: nn.Module, loader, device, optimizer, logger: ModelTrainLogger = None):
     model.train()
@@ -132,6 +136,8 @@ def test(model: nn.Module, loader, device, logger: ModelTrainLogger = None):
         logger.log_test(model, test_loss, test_acc)
     else:
         ModelTrainLogger.log_msg(test_loss, test_acc)
+    
+    return 
 
 def bayesian_test(model: nn.Module, loader, device, num_mc, logger: ModelTrainLogger = None):
     model.eval()
@@ -148,7 +154,8 @@ def bayesian_test(model: nn.Module, loader, device, num_mc, logger: ModelTrainLo
             for mc_run in range(num_mc):
                 output_list.append(model(data))
                 kl_list.append(get_kl_loss(model))
-            output = torch.mean(torch.stack(output_list), dim=0)
+            raw_output = torch.stack(output_list)
+            output = torch.mean(raw_output, dim=0)
             kl = torch.mean(torch.stack(kl_list), dim=0)
             loss = F.nll_loss(torch.log(output), target, reduction='sum') + (kl / batch_size)
 
@@ -162,3 +169,5 @@ def bayesian_test(model: nn.Module, loader, device, num_mc, logger: ModelTrainLo
         logger.log_test(model, test_loss, test_acc)
     else:
         ModelTrainLogger.log_msg(test_loss, test_acc)
+
+    return raw_output

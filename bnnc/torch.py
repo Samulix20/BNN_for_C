@@ -20,12 +20,11 @@ def info_from_model(model: nn.Module, name: str) -> ModelInfo:
         if n == "":
             continue
         l = LayerInfo()
-        l.name = n
+        l.name = n.replace(".", "_")
         if isinstance(t, nn.ReLU):
             l.type = "ReLU"
             l.is_activation = True
-        elif isinstance(t, nn.LogSoftmax):
-            # LogSoftmax can be turned into Softmax for inference
+        elif isinstance(t, nn.Softmax):
             l.type = "Softmax"
             l.is_activation = True
         elif isinstance(t, nn.MaxPool2d):
