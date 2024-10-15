@@ -19,12 +19,6 @@ C_DATA_TYPE_RANGES = {
     "int32":  [-(2**31), 2**31 - 1]
 }
 
-C_FUNCTION_NAMES = {
-    "Conv2D": "bnn_conv2D",
-    "Linear": "bnn_linear",
-    "MaxPool2D": "layer_max_pooling2D"
-}
-
 C_INTERNAL_GENERATORS = {
     "Normal": 0,
     "Uniform": 1,
@@ -78,40 +72,10 @@ def ndarray_to_c(array: npt.NDArray, name: str, data_type: str) -> str:
 
     return text
 
-def conv_output_shape(
-    input_shape: npt.NDArray, kernel_size: npt.NDArray, out_channels: npt.NDArray, 
-    dims=2, stride=np.array([1,1]), padding="valid"
-):
-    if isinstance(padding, str):
-        output_shape = input_shape.copy()
-        output_shape[dims] = out_channels
-        if padding == "valid":
-            output_shape[:dims] = ((output_shape[:dims] - kernel_size[:dims]) / stride[:dims]) + 1
-        elif padding == "same":
-            pass
-    else:
-        output_shape[:dims] = np.floor(((output_shape[:dims] + 2 * padding - 1 * (kernel_size - 1) - 1) / stride) + 1)
-    return output_shape
-
-
-def max_pool_output_shape(input_shape: npt.NDArray, dims=2, stride=2):
-    output_shape = input_shape.copy()
-    output_shape[:dims] = output_shape[:dims] / stride
-    return output_shape
-
-def calculate_padding(padding: str|npt.NDArray, input_shape: npt.NDArray, kernel_size: npt.NDArray, stride: npt.NDArray):
-    if not isinstance(padding, str):
-        return padding
-
-    if padding == "valid":
-        return np.array([0,0])
-    elif padding == "same":
-        output = np.ceil(input_shape[:2]/stride)
-        return np.clip(((stride * (output - 1) - input_shape[:2] + (kernel_size - 1) + 1) / 2).astype(int), 0, None)
-
 class ModelInfo:
 
     def __init__(self, name: str) -> None:
+        self.buffers_calculated = False
         # Default init values
         self.layers: list[LayerInfo] = []
         self.max_buffer_required = 0
@@ -164,43 +128,38 @@ class ModelInfo:
     def prune(self):
         aux = []
         for l in self.layers:
-            if l.type != None:
+            if isinstance(l, FoldableInfo) and l.t is None:
+                continue
+            else:
                 aux.append(l)
         self.layers = aux
 
     def fold_layers(self):
         for i, l in enumerate(self.layers):
-            if l.type == "BatchNorm2D":
+            if isinstance(l, FoldableInfo) and l.t == "BatchNorm2D":
                 self.layers[i-1].folded_batch_norm = l
-                l.type = None
+                l.fold()
         self.prune()
         
         for i, l in enumerate(self.layers):
-            if l.is_activation:
-                self.layers[i-1].activation = l.type
-                l.type = None
+            if isinstance(l, FoldableInfo) and l.is_activation:
+                self.layers[i-1].activation = l.t
+                l.fold()
         self.prune()
 
         for i, l in enumerate(self.layers):
-            if l.type == "ResidualBlock":
+            if isinstance(l, FoldableInfo) and l.t == "ResidualBlock":
                 self.layers[i-1].output_to_residual = True
                 self.layers[i+1].input_from_residual = True
-                l.type = None
+                l.fold()
         self.prune()
 
         for i, l in enumerate(self.layers):
-            if l.type == "ResidualConv":
+            if isinstance(l, FoldableInfo) and l.t == "ResidualConv":
                 self.layers[i+1].input_from_residual = True
-                l.type = None
+                l.fold()
         self.prune()
 
-
-    def fuse_residuals(self):
-        for i, l in enumerate(self.layers):
-            if l.type == "ResidualBlock":
-                self.layers[i-1].output_to_residual = True
-                self.layers[i+1].input_from_residual = True
-        self.prune()
 
     def calculate_buffers(self, input_shape: npt.NDArray):
         prev_out = None
@@ -210,7 +169,7 @@ class ModelInfo:
             if prev_out is None:
 
                 l.in_buffer_shape = input_shape.copy()
-                l.output_shape(input_shape)
+                l.output_shape()
 
                 prev_shape = l.out_buffer_shape
                 l.in_addr = "Input"
@@ -220,11 +179,11 @@ class ModelInfo:
             else:
 
                 # Automatic flatten layer before linear
-                if l.type == "Linear":
+                if isinstance(l, LinearInfo):
                     prev_shape = np.prod(prev_shape)
 
                 l.in_buffer_shape = prev_shape.copy()
-                l.output_shape(prev_shape)
+                l.output_shape()
 
                 out = -l.out_buffer_shape.prod() if prev_out == 0 else 0
                 l.in_addr = prev_out
@@ -238,11 +197,13 @@ class ModelInfo:
             m = max(m, l.buffer_required())
         self.max_buffer_required = m
 
+        self.buffers_calculated = True
+
     def uniform_weight_transform(self):
         self.gen_mode = "Uniform"
 
         for l in self.layers:
-            if l.type not in ["Conv2D", "Linear"]:
+            if not(isinstance(l, Conv2DInfo) or isinstance(l, LinearInfo)):
                 continue
 
             b = l.sigma_buffer * sqrt(12.0)
@@ -255,7 +216,7 @@ class ModelInfo:
         self.gen_mode = "Bernoulli"
 
         for l in self.layers:
-            if l.type not in ["Conv2D", "Linear"]:
+            if not(isinstance(l, Conv2DInfo) or isinstance(l, LinearInfo)):
                 continue
 
             p = l.mu_buffer**2 / (l.mu_buffer**2 + l.sigma_buffer**2)
@@ -266,7 +227,7 @@ class ModelInfo:
 
     def to_fixed(self):
         for l in self.layers:
-            if l.type not in ["Conv2D", "Linear"]:
+            if not(isinstance(l, Conv2DInfo) or isinstance(l, LinearInfo)):
                 continue
 
             l.mu_buffer = to_fixed(l.mu_buffer, self.fixed_bits)
@@ -277,8 +238,9 @@ class ModelInfo:
     def find_data_types(self):
         data_range = [None, None, None]
         for l in self.layers:
-            if l.type not in ["Conv2D", "Linear"]:
+            if not(isinstance(l, Conv2DInfo) or isinstance(l, LinearInfo)):
                 continue
+    
             # Data range w mu
             data_range[0] = update_data_range(data_range[0], l.mu_buffer)
             # Data range w sigma
@@ -308,6 +270,10 @@ class ModelInfo:
         return lib_config
 
     def create_c_code(self) -> tuple[str,str,str]:
+        if not self.buffers_calculated:
+            print("ERROR BUFFER SIZE UNDEFINED")
+            panic()
+        
         # find data range/type
         self.to_fixed()
         self.find_data_types()
@@ -320,56 +286,9 @@ class ModelInfo:
         model_buffers_ptrs += self.create_internal_buffers()
 
         for l in self.layers:
-            lid = l.layer_id(self)
-            lfcall = f"\t{C_FUNCTION_NAMES[l.type]}"
-
-            if l.type == "Conv2D":
-                
-                i, j, k = l.in_buffer_shape
-
-                aux_pad = calculate_padding(l.padding, l.in_buffer_shape, np.array(l.kernel_size), l.stride)
-                
-                lfcall += f"""_{l.activation}(
-                    {l.input_ptr(self)},
-                    {i}, {j}, {k}, {l.out_channels}, {l.kernel_size[0]},
-                    {aux_pad[0]}, {aux_pad[1]},
-                    {l.stride[0]}, {l.stride[1]},
-                    {lid}_mu_buffer,
-                    {lid}_sigma_buffer,
-                    {lid}_mu_bias,
-                    {lid}_out,
-                    BNN_SCALE_FACTOR
-                );\n"""
-
-                model_weights += l.create_weight_buffers(self)
-
-            elif l.type == "Linear":
-
-                lfcall += f"""_{l.activation}(
-                    {lid}_sigma_buffer,
-                    {lid}_mu_buffer,
-                    {lid}_mu_bias,
-                    {l.input_ptr(self)},
-                    {lid}_out,
-                    BNN_SCALE_FACTOR,
-                    {l.out_features}, {l.in_features}
-                );\n"""
-
-                model_weights += l.create_weight_buffers(self)
-
-            elif l.type == "MaxPool2D":
-                
-                i, j, k = l.in_buffer_shape
-
-                lfcall += f"""(
-                    {l.input_ptr(self)},
-                    {i}, {j}, {k}, {l.kernel_size}, {l.kernel_size},
-                    {lid}_out 
-                );\n"""
-
-
+            model_weights += l.create_weight_buffers(self)
             model_buffers_ptrs += l.create_inout_ptrs(self)
-            model_fcall += lfcall
+            model_fcall += l.cfcall(self)
         
         l = self.layers[-1]
         model_fcall += f"\treturn {l.layer_id(self)}_out;\n}}"
@@ -396,17 +315,13 @@ class ModelInfo:
 
 class LayerInfo:
 
-    def __init__(self):
+    def __init__(self, name: str):
         # Layer Name
-        self.name = None
+        self.name = name
 
         # Layer Type
         self.is_input = False
-        self.type = None
 
-        # Torch activations are first stored as special layers
-        self.is_activation = False
-        
         # Activation function String
         self.activation = None
 
@@ -417,16 +332,7 @@ class LayerInfo:
         self.sigma_bias = None
 
         # Info for convolutional type layers
-        self.stride = None
-        self.kernel_size = None
-        self.in_channels = None
-        self.out_channels = None
-        self.padding = None
         self.folded_batch_norm = None
-
-        # Linear layers info
-        self.in_features = None
-        self.out_features = None
 
         # Buffer 
         self.in_buffer_shape = None
@@ -462,31 +368,32 @@ class LayerInfo:
     def create_weight_buffers(self, m: ModelInfo):
         r = ""
         lid = self.layer_id(m)
-        r += ndarray_to_c(self.mu_buffer, f"{lid}_mu_buffer", m.data_types["MU"])
-        r += ndarray_to_c(self.sigma_buffer, f"{lid}_sigma_buffer", m.data_types["SIGMA"])
-        r += ndarray_to_c(self.mu_bias, f"{lid}_mu_bias", m.data_types["BIAS"])
+
+        if self.mu_buffer is not None:
+            r += ndarray_to_c(self.mu_buffer, f"{lid}_mu_buffer", m.data_types["MU"])
+        
+        if self.sigma_buffer is not None:
+            r += ndarray_to_c(self.sigma_buffer, f"{lid}_sigma_buffer", m.data_types["SIGMA"])
+        
+        if self.mu_bias is not None:
+            r += ndarray_to_c(self.mu_bias, f"{lid}_mu_bias", m.data_types["BIAS"])
+
         #r += ndarray_to_c(l.sigma_bias, f"{lid}_sigma_bias", 8, "int32")
         return r
 
     # Output shape size
-    def output_shape(self, input_shape: npt.NDArray):
-        if self.is_activation:
-            self.out_buffer_shape = input_shape
-        elif self.type == "MaxPool2D":
-            self.out_buffer_shape = max_pool_output_shape(input_shape, dims=2, stride=self.kernel_size)
-        elif self.type == "Conv2D":
-            self.out_buffer_shape = conv_output_shape(input_shape, self.kernel_size, self.out_channels, dims=2, stride=self.stride, padding=self.padding)
-        elif self.type == "Linear":
-            self.out_buffer_shape = np.array(self.out_features)
-        else:
-            panic()
-        return self.out_buffer_shape
-    
+    def output_shape(self):
+        print(f"Shape Not implemented for {type(self)}")
+        panic()
+
     def buffer_required(self):
         return np.prod(self.in_buffer_shape) + np.prod(self.out_buffer_shape)
 
     def buffer_info(self):
         print(f"{self.in_buffer_shape} -> {self.type}(in={self.in_addr}, out={self.out_addr}) -> {self.out_buffer_shape} [{self.buffer_required()}]")
+
+    def _info(self):
+        return f"? {self.name} {type(self)} "
 
     def layer_info(self):
         r = ""
@@ -494,17 +401,7 @@ class LayerInfo:
         if self.input_from_residual:
             r += "[Residual ->] "
 
-        if self.type == "Conv2D":
-            r += f"{self.name} Conv2D({self.in_channels}, {self.out_channels}, {self.kernel_size}, {self.stride}, {self.padding}) [{self.mu_buffer.shape}] "
-        elif self.type == "Linear":
-            r += f"{self.name} Linear({self.in_features}, {self.out_features}) [{self.mu_buffer.shape}] "
-        elif self.type == "MaxPool2D":
-            r += f"{self.name} MaxPool2D({self.kernel_size}) "
-        elif self.type == "ResidualAdd":
-            r += f"{self.name} ResidualAdd"
-        
-        else:
-            r += f"? {self.name} {self.type} "
+        r += self._info() + " "
 
         if self.folded_batch_norm is not None:
             r += "[Folded BatchNorm] "
@@ -515,3 +412,184 @@ class LayerInfo:
             r += "[-> Residual] "
 
         print(r)
+
+
+class FoldableInfo(LayerInfo):
+    def __init__(self, l: LayerInfo, t: str):
+        super().__init__(l.name)
+
+        self.t = t
+        # Torch activations are first stored as special layers
+        self.is_activation = False
+
+        if t in ["ReLU", "Softmax"]:
+            self.is_activation = True
+    
+    def fold(self):
+        self.t = None
+
+
+class ResidualAddInfo(LayerInfo):
+    def __init__(self, l: LayerInfo):
+        super().__init__(l.name)
+        self.input_from_residual = True
+
+    def output_shape(self):
+        self.out_buffer_shape = self.in_buffer_shape.copy()
+        return self.out_buffer_shape
+    
+    def cfcall(self, m: ModelInfo):
+
+        lid = self.layer_id(m)
+        iptr = self.input_ptr(m)
+
+        i, j, k = self.in_buffer_shape
+
+        return f"""add_3D{self.activation}(
+            {iptr}, last_residual
+            {i}, {j}, {k},
+            {lid}_out
+        );\n"""
+
+    def _info(self):
+        return f"{self.name} ADD({self.out_buffer_shape})"
+
+
+class Conv2DInfo(LayerInfo):
+    def __init__(self, l: LayerInfo):
+        super().__init__(l.name)
+
+        # Activation function String
+        self.activation = None
+
+        # Info for convolutional type layers
+        self.stride = None
+        self.kernel_size = None
+        self.in_channels = None
+        self.out_channels = None
+        self.padding = None
+        self.folded_batch_norm = None
+
+    def output_shape(self):
+        dims = 2
+
+        output_shape = self.in_buffer_shape.copy()
+        output_shape[dims] = self.out_channels
+
+        if isinstance(self.padding, str):
+            
+            if self.padding == "valid":
+                output_shape[:dims] = ((self.in_buffer_shape[:dims] - self.kernel_size[:dims]) / self.stride[:dims]) + 1
+            elif self.padding == "same":
+                pass
+    
+        else:
+            self.padding = np.array(self.padding)
+            output_shape[:dims] = np.floor(((self.in_buffer_shape[:dims] + 2 * self.padding - 1 * (self.kernel_size - 1) - 1) / self.stride) + 1)
+        
+        self.out_buffer_shape = output_shape
+        return self.out_buffer_shape
+
+
+    def calculate_padding(self):
+        
+        if not isinstance(self.padding, str):
+            return self.padding
+
+        if self.padding == "valid":
+            return np.array([0,0])
+        elif self.padding == "same":
+            output = np.ceil(self.in_buffer_shape[:2]/self.stride)
+            return np.clip(((self.stride * (output - 1) - self.in_buffer_shape[:2] + (self.kernel_size - 1) + 1) / 2).astype(int), 0, None)
+
+    def cfcall(self, m: ModelInfo):
+
+        lid = self.layer_id(m)
+        iptr = self.input_ptr(m)
+
+        i, j, k = self.in_buffer_shape
+        pdi, pdj = self.calculate_padding()
+        stri, strj = self.stride
+
+        return f"""bnn_conv2D_{self.activation}(
+            {iptr},
+            {i}, {j}, {k}, {self.out_channels}, {self.kernel_size[0]},
+            {pdi}, {pdj}, {stri}, {strj},
+            {lid}_mu_buffer,
+            {lid}_sigma_buffer,
+            {lid}_mu_bias,
+            {lid}_out,
+            BNN_SCALE_FACTOR
+        );\n"""
+
+    def _info(self):
+        return f"{self.name} Conv2D({self.in_channels}, {self.out_channels}, {self.kernel_size}, {self.stride}, {self.padding}) [{self.mu_buffer.shape}]"
+
+
+class LinearInfo(LayerInfo):
+    def __init__(self, l: LayerInfo):
+        super().__init__(l.name)
+
+        # Linear layers info
+        self.in_features = None
+        self.out_features = None
+
+    def output_shape(self):
+        self.out_buffer_shape = np.array(self.out_features)
+        return self.out_buffer_shape
+
+    def cfcall(self, m: ModelInfo):
+        
+        lid = self.layer_id(m)
+        iptr = self.input_ptr(m)
+        
+        return f"""bnn_linear_{self.activation}(
+            {lid}_sigma_buffer,
+            {lid}_mu_buffer,
+            {lid}_mu_bias,
+            {iptr},
+            {lid}_out,
+            BNN_SCALE_FACTOR,
+            {self.out_features}, {self.in_features}
+        );\n"""
+
+    def _info(self):
+        return f"{self.name} Linear({self.in_features}, {self.out_features}) [{self.mu_buffer.shape}]"
+
+
+class Pool2DInfo(LayerInfo):
+    def __init__(self, l: LayerInfo, f: str, kernel_size: npt.NDArray):
+        super().__init__(l.name)
+
+        # Kernel size of pooling
+        self.kernel_size = kernel_size
+
+        # Max, Avg ...
+        self.f = f
+
+    def output_shape(self):
+        dims = 2 
+        output_shape = self.in_buffer_shape.copy()
+        output_shape[:dims] = output_shape[:dims] / self.kernel_size
+        self.out_buffer_shape = output_shape
+        return self.out_buffer_shape
+
+    def cfcall(self, m: ModelInfo):
+        lid = self.layer_id(m)
+        iptr = self.input_ptr(m)
+
+        i, j, k = self.in_buffer_shape
+        stride_i = self.kernel_size
+        stride_j = self.kernel_size
+
+        return f"""layer_{self.f}_pooling2D(
+            {iptr},
+            {i}, {j}, {k}, {stride_i}, {stride_j},
+            {lid}_out 
+        );\n"""
+
+
+    def _info(self):
+        return f"{self.name} {self.f}Pool2D({self.kernel_size})"
+
+

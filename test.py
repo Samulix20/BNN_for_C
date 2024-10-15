@@ -85,7 +85,18 @@ def main_ld():
     print(model)
 
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
+    for data, targets in test_loader:
+        pass
+    targets = targets[:10]
+    data = data.permute((0,2,3,1))
+    input_shape = np.array(data[0].shape)
+    flat_data = data.numpy().reshape((data.shape[0], -1))
+
+    model_info.calculate_buffers(input_shape)
     model_info.print_buffer_info()
+
+    l, h, w = model_info.create_c_code()
+    print(h)
 
     #bayesian_test(model, test_loader, device, 100)
 
@@ -109,12 +120,8 @@ def main_c():
     flat_data = data.numpy().reshape((data.shape[0], -1))
 
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
-    
-    input_shape = np.array(data[0].shape)
     model_info.calculate_buffers(input_shape)
-    
     model_info.uniform_weight_transform()
-
     run_c_model(model_info, flat_data, num_workers, max_img_per_worker)
 
     model.to(device)
