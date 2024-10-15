@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from bnnc.torch import ResidualBlock
+
 # Model definitions
 
 class BasicBlock(nn.Module):
@@ -30,42 +32,6 @@ class BasicBlock(nn.Module):
             x = self.pool(x)
 
         return x
-
-
-class ResidualBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, stride):
-        super().__init__()
-
-        if stride == 1:
-            c1 = nn.Conv2d(in_channels, out_channels, 3, 1, "same")
-        else:
-            c1 = nn.Conv2d(in_channels, out_channels, 3, stride, 1)
-
-        self.conv1 = c1
-        self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu1 = nn.ReLU()
-        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, 1, "same")
-        self.bn2 = nn.BatchNorm2d(out_channels)
-
-        self.diff = in_channels != out_channels
-        if (self.diff):
-            self.extra_conv = c1
-
-        self.relu2 = nn.ReLU()
-
-    def forward(self, x):
-        y = self.conv1(x)
-        y = self.bn1(y)
-        y = self.relu1(y)
-        y = self.conv2(y)
-        y = self.bn2(y)
-
-        if(self.diff):
-            x = self.extra_conv(x)
-
-        y = x + y
-        y = self.relu2(y)
-        return y
 
 
 class B2N2(nn.Module):
@@ -115,9 +81,6 @@ class AddResidual(nn.Module):
 
     def forward(self, x, y):
         return x + y
-
-
-
 
 
 class RESNET_TINY(nn.Module):

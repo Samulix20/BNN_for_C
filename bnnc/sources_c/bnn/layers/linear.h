@@ -30,7 +30,7 @@ inline void bnn_linear_ReLU(
 		Data_t q_o = (Data_t) (q_acc + q_bias);
 		
 		// ReLU
-		v_q_ouput[i] = q_o < 0 ? 0 : q_o;
+		v_q_ouput[i] = ReLU(q_o);
 	}
 }
 

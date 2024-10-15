@@ -54,15 +54,15 @@ def get_data(gray: bool = False):
 
 def main_train():
     device = get_device()
-    model = B2N2()
+    model = RESNET_TINY()
     dnn_to_bnn(model, TrainParams.bnn_prior_parameters)
     model.to(device)
 
     print(model)
 
     optimizer = get_optimizer(model)
-    train_data, train_loader, test_data , test_loader = get_data(gray=True)
-    logger = ModelTrainLogger("Model", "B2N2")
+    train_data, train_loader, test_data , test_loader = get_data()
+    logger = ModelTrainLogger("Model", "BnnResnetTiny")
 
     for epoch in range(1, TrainParams.num_epochs + 1):
         bayesian_train(model, train_loader, device, optimizer, 1, logger)
@@ -78,16 +78,20 @@ def main_ld():
     device = get_device()
     model = RESNET_TINY()
     dnn_to_bnn(model, TrainParams.bnn_prior_parameters)
-    model.load_state_dict(torch.load('Model/best_BnnResnetTiny', weights_only=True))
-    model.to(device)
+    #model.load_state_dict(torch.load('Model/best_BnnResnetTiny', weights_only=True))
 
     train_data, train_loader, test_data , test_loader = get_data()
 
-    bayesian_test(model, test_loader, device, 100)
+    print(model)
+
+    model_info = bnnc.torch.info_from_model(model, "bnn_model")
+    model_info.print_buffer_info()
+
+    #bayesian_test(model, test_loader, device, 100)
 
 def main_c():
     num_workers = 20
-    max_img_per_worker = 100
+    max_img_per_worker = 10
     num_targets = num_workers * max_img_per_worker
     
     device = get_device()
@@ -129,6 +133,6 @@ def main_c():
     bnnc.plot.compare_predictions_plots(pydata, cdata, targets, "Figures")
 
 if __name__ == "__main__":
-    #main_ld()
-    main_c()
+    main_ld()
+    #main_c()
     #main_train()

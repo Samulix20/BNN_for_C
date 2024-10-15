@@ -7,6 +7,60 @@ from bayesian_torch.layers.flipout_layers import conv_flipout as bnn_conv, linea
 
 from .model_info import *
 
+# Residual block, required for creating the residual buffers
+
+class AddResidual(nn.Module):
+    def __init__(self):
+        super().__init__()
+    
+    def forward(self, x, y):
+        x = x + y
+        return x
+
+class ResidualConv(nn.Module):
+    def __init__(self, l):
+        super().__init__()
+        self.l = l
+
+    def forward(self, x):
+        x = self.l(x)
+        return x
+
+class ResidualBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, stride):
+        super().__init__()
+
+        if stride == 1:
+            c1 = nn.Conv2d(in_channels, out_channels, 3, 1, "same")
+        else:
+            c1 = nn.Conv2d(in_channels, out_channels, 3, stride, 1)
+
+        self.conv1 = c1
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu1 = nn.ReLU()
+        self.conv2 = nn.Conv2d(out_channels, out_channels, 3, 1, "same")
+        self.bn2 = nn.BatchNorm2d(out_channels)
+
+        self.diff = in_channels != out_channels
+        if (self.diff):
+            self.extra_conv = ResidualConv(c1)
+
+        self.res = AddResidual()
+        self.relu2 = nn.ReLU()
+
+    def forward(self, x):
+        y = self.conv1(x)
+        y = self.bn1(y)
+        y = self.relu1(y)
+        y = self.conv2(y)
+        y = self.bn2(y)
+
+        if(self.diff):
+            x = self.extra_conv(x)
+
+        y = self.res(x, y)
+        y = self.relu2(y)
+        return y
 
 def info_from_model(model: nn.Module, name: str) -> ModelInfo:
     """
@@ -30,13 +84,14 @@ def info_from_model(model: nn.Module, name: str) -> ModelInfo:
         elif isinstance(t, nn.MaxPool2d):
             l.type = "MaxPool2D"
             l.kernel_size = t.kernel_size
+        elif isinstance(t, nn.AvgPool2d):
+            l.type = "AvgPool2D"
+            l.kernel_size = t.kernel_size
         elif isinstance(t, bnn_conv.Conv2dFlipout):
             l.type = "Conv2D"
             # Padding must be "same" or "valid" == (0,0)
-            if t.padding == (0,0):
+            if t.padding == (0,0) or t.padding == "valid":
                 l.padding = "valid"
-            elif t.padding != "same" and t.padding != "valid":
-                panic()
             else:
                 l.padding = t.padding
             l.kernel_size = t.kernel_size
@@ -57,8 +112,19 @@ def info_from_model(model: nn.Module, name: str) -> ModelInfo:
             l.sigma_buffer = F.softplus(t.rho_weight).detach().numpy()
             l.mu_bias = t.mu_bias.detach().numpy()
             l.sigma_bias = F.softplus(t.rho_bias).detach().numpy()
+        elif isinstance(t, nn.BatchNorm2d):
+            l.type = "BatchNorm2D"
+        elif isinstance(t, ResidualBlock):
+            l.type = "ResidualBlock"
+        elif isinstance(t, AddResidual):
+            l.type = "ResidualAdd"
+            l.input_from_residual = True
+        elif isinstance(t, ResidualConv):
+            l.type = "ResidualConv"
+        elif isinstance(t, nn.Flatten):
+            continue
         model_info.layers.append(l)
     model_info.prune()
-    model_info.fuse_activations()
+    model_info.fold_layers()
     model_info.layers[0].is_input = True
     return model_info

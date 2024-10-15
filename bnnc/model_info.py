@@ -82,14 +82,15 @@ def conv_output_shape(
     input_shape: npt.NDArray, kernel_size: npt.NDArray, out_channels: npt.NDArray, 
     dims=2, stride=np.array([1,1]), padding="valid"
 ):
-    output_shape = input_shape.copy()
-    output_shape[dims] = out_channels
-    if padding == "valid":
-        output_shape[:dims] = ((output_shape[:dims] - kernel_size[:dims]) / stride[:dims]) + np.ones(dims)
-    elif padding == "same":
-        pass
+    if isinstance(padding, str):
+        output_shape = input_shape.copy()
+        output_shape[dims] = out_channels
+        if padding == "valid":
+            output_shape[:dims] = ((output_shape[:dims] - kernel_size[:dims]) / stride[:dims]) + 1
+        elif padding == "same":
+            pass
     else:
-        panic()
+        output_shape[:dims] = np.floor(((output_shape[:dims] + 2 * padding - 1 * (kernel_size - 1) - 1) / stride) + 1)
     return output_shape
 
 
@@ -97,6 +98,16 @@ def max_pool_output_shape(input_shape: npt.NDArray, dims=2, stride=2):
     output_shape = input_shape.copy()
     output_shape[:dims] = output_shape[:dims] / stride
     return output_shape
+
+def calculate_padding(padding: str|npt.NDArray, input_shape: npt.NDArray, kernel_size: npt.NDArray, stride: npt.NDArray):
+    if not isinstance(padding, str):
+        return padding
+
+    if padding == "valid":
+        return np.array([0,0])
+    elif padding == "same":
+        output = np.ceil(input_shape[:2]/stride)
+        return np.clip(((stride * (output - 1) - input_shape[:2] + (kernel_size - 1) + 1) / 2).astype(int), 0, None)
 
 class ModelInfo:
 
@@ -125,7 +136,7 @@ class ModelInfo:
         print(f"Max Buffer: {self.max_buffer_required}")
         for l in self.layers:
             l.layer_info()
-            l.buffer_info()
+            #l.buffer_info()
 
     def internal_buffer_id(self) -> str:
         return f"{self.name}_internal_buffer"
@@ -157,16 +168,39 @@ class ModelInfo:
                 aux.append(l)
         self.layers = aux
 
-    def fuse_activations(self):
+    def fold_layers(self):
+        for i, l in enumerate(self.layers):
+            if l.type == "BatchNorm2D":
+                self.layers[i-1].folded_batch_norm = l
+                l.type = None
+        self.prune()
+        
         for i, l in enumerate(self.layers):
             if l.is_activation:
                 self.layers[i-1].activation = l.type
-        
-        nl = []
-        for l in self.layers:
-            if not l.is_activation:
-                nl.append(l)
-        self.layers = nl
+                l.type = None
+        self.prune()
+
+        for i, l in enumerate(self.layers):
+            if l.type == "ResidualBlock":
+                self.layers[i-1].output_to_residual = True
+                self.layers[i+1].input_from_residual = True
+                l.type = None
+        self.prune()
+
+        for i, l in enumerate(self.layers):
+            if l.type == "ResidualConv":
+                self.layers[i+1].input_from_residual = True
+                l.type = None
+        self.prune()
+
+
+    def fuse_residuals(self):
+        for i, l in enumerate(self.layers):
+            if l.type == "ResidualBlock":
+                self.layers[i-1].output_to_residual = True
+                self.layers[i+1].input_from_residual = True
+        self.prune()
 
     def calculate_buffers(self, input_shape: npt.NDArray):
         prev_out = None
@@ -292,10 +326,14 @@ class ModelInfo:
             if l.type == "Conv2D":
                 
                 i, j, k = l.in_buffer_shape
+
+                aux_pad = calculate_padding(l.padding, l.in_buffer_shape, np.array(l.kernel_size), l.stride)
                 
-                lfcall += f"""_{l.padding}_{l.activation}(
+                lfcall += f"""_{l.activation}(
                     {l.input_ptr(self)},
                     {i}, {j}, {k}, {l.out_channels}, {l.kernel_size[0]},
+                    {aux_pad[0]}, {aux_pad[1]},
+                    {l.stride[0]}, {l.stride[1]},
                     {lid}_mu_buffer,
                     {lid}_sigma_buffer,
                     {lid}_mu_bias,
@@ -384,6 +422,7 @@ class LayerInfo:
         self.in_channels = None
         self.out_channels = None
         self.padding = None
+        self.folded_batch_norm = None
 
         # Linear layers info
         self.in_features = None
@@ -394,6 +433,10 @@ class LayerInfo:
         self.out_buffer_shape = None
         self.in_addr = None
         self.out_addr = None
+
+        # Residual I/O
+        self.output_to_residual = False
+        self.input_from_residual = False
 
     def layer_id(self, m: ModelInfo):
          return f"{m.name}_{self.name}"
@@ -446,13 +489,29 @@ class LayerInfo:
         print(f"{self.in_buffer_shape} -> {self.type}(in={self.in_addr}, out={self.out_addr}) -> {self.out_buffer_shape} [{self.buffer_required()}]")
 
     def layer_info(self):
+        r = ""
+
+        if self.input_from_residual:
+            r += "[Residual ->] "
+
         if self.type == "Conv2D":
-            print(f"Conv2D({self.in_channels}, {self.out_channels}, {self.kernel_size}, {self.stride}, {self.padding}) [{self.mu_buffer.shape}] {self.activation}")
+            r += f"{self.name} Conv2D({self.in_channels}, {self.out_channels}, {self.kernel_size}, {self.stride}, {self.padding}) [{self.mu_buffer.shape}] "
         elif self.type == "Linear":
-            print(f"Linear({self.in_features}, {self.out_features}) [{self.mu_buffer.shape}] {self.activation}")
+            r += f"{self.name} Linear({self.in_features}, {self.out_features}) [{self.mu_buffer.shape}] "
         elif self.type == "MaxPool2D":
-            print(f"MaxPool2D({self.kernel_size}) {self.activation}")
-        elif self.type == "ReLU":
-            print("ReLU")
-        elif self.type == "Softmax":
-            print("Softmax")
+            r += f"{self.name} MaxPool2D({self.kernel_size}) "
+        elif self.type == "ResidualAdd":
+            r += f"{self.name} ResidualAdd"
+        
+        else:
+            r += f"? {self.name} {self.type} "
+
+        if self.folded_batch_norm is not None:
+            r += "[Folded BatchNorm] "
+
+        r += f"[F: {self.activation}] "
+
+        if self.output_to_residual:
+            r += "[-> Residual] "
+
+        print(r)
