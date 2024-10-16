@@ -79,14 +79,14 @@ def info_from_model(model: nn.Module, name: str) -> ModelInfo:
             l = Pool2DInfo(l, "max", t.kernel_size)
 
         elif isinstance(t, nn.AvgPool2d):
-            l = Pool2DInfo(l, "vvg", t.kernel_size)
+            l = Pool2DInfo(l, "avg", t.kernel_size)
 
         elif isinstance(t, bnn_conv.Conv2dFlipout):
             l = Conv2DInfo(l)
             
             l.padding = t.padding
             l.kernel_size = np.array(t.kernel_size)
-            l.stride = t.stride
+            l.stride = np.array(t.stride)
             l.in_channels = t.in_channels
             l.out_channels = t.out_channels
             # Buffers

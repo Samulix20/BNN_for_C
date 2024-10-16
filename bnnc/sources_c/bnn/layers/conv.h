@@ -1,6 +1,6 @@
 #include "utils.h"
 
-inline void bnn_conv2D_ReLU (
+inline void bnn_conv2D (
 	Data_t* t_q_input, 
     size_t ilen, size_t jlen, size_t tlen,
 	size_t num_filters, size_t kernel_size,
@@ -10,7 +10,8 @@ inline void bnn_conv2D_ReLU (
     Sigma_t* sigma_kernels, 
     Bias_t* v_q_bias,
 	Data_t* t_q_output,
-    Scale_t S
+    enum Activation_Id f_act,
+	Scale_t S
 ) {
 	// Padding same, same input and output size
 	const size_t out_ilen = ((ilen + 2 * pad_i - 1 * (kernel_size - 1) - 1) / stride_i) + 1;
@@ -82,8 +83,12 @@ inline void bnn_conv2D_ReLU (
 
 				idx = flat_idx_3d(i, j, t, out_jlen, out_tlen);
 				
-                // ReLU
-                t_q_output[idx] = ReLU(q_o);
+                // Apply f_act
+				if (f_act == ReLU_ID) {
+					q_o = ReLU(q_o);
+				}
+
+				t_q_output[idx] = q_o;
 			}
 		}
 	}

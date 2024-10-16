@@ -4,6 +4,8 @@
 #include "types.h"
 #include "random.h"
 
+enum Activation_Id {None_ID = 0, ReLU_ID = 1, Softmax_ID = 2};
+
 inline Data_t ReLU(const Data_t v) {
 	return v > 0 ? v : 0;
 }
@@ -71,7 +73,7 @@ inline Softmax_t expfix(Iop_t v, Scale_t S) {
 // Calculates softmax function of array v
 // Uses v - max(v) to avoid overflows
 // Internally uses Softmax_t (F32_28) to get good decimal precision
-inline void softmax(Iop_t* v_in, Softmax_t* v_out, Iop_t max, Scale_t S, size_t n) {
+inline void softmax(Iop_t* v_in, Data_t* v_out, Iop_t max, Scale_t S, size_t n) {
 	Softmax_t denom = 0;
 	Softmax_t tmp[n];
 
@@ -87,7 +89,8 @@ inline void softmax(Iop_t* v_in, Softmax_t* v_out, Iop_t max, Scale_t S, size_t 
 
 	// numerator * (1/denominator)
 	for(size_t i = 0; i < n; i++) {
-		v_out[i] = _MULFIX(tmp[i], denom, S_Softmax, Softmax_t, int64);
+		tmp[i] = _MULFIX(tmp[i], denom, S_Softmax, Softmax_t, int64);
+		v_out[i] = (Data_t) (tmp[i] >> (S_Softmax - S));
 	}
 }
 

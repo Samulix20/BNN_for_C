@@ -82,8 +82,6 @@ def main_ld():
 
     train_data, train_loader, test_data , test_loader = get_data()
 
-    print(model)
-
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
     for data, targets in test_loader:
         pass
@@ -140,6 +138,6 @@ def main_c():
     bnnc.plot.compare_predictions_plots(pydata, cdata, targets, "Figures")
 
 if __name__ == "__main__":
-    main_ld()
-    #main_c()
+    #main_ld()
+    main_c()
     #main_train()

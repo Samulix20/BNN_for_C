@@ -3,6 +3,8 @@ import numpy.typing as npt
 
 from math import sqrt, log2, ceil
 
+from prettytable import PrettyTable
+
 import os
 c_sources_abspath = f"{os.path.dirname(__file__)}/sources_c"
 
@@ -73,12 +75,12 @@ def ndarray_to_c(array: npt.NDArray, name: str, data_type: str) -> str:
     return text
 
 class ModelInfo:
-
-    def __init__(self, name: str) -> None:
+    def __init__(self, name: str):
         self.buffers_calculated = False
         # Default init values
         self.layers: list[LayerInfo] = []
-        self.max_buffer_required = 0
+        self.buffer_max_sizes = [1,1,1]
+        self.buffer_sequence = []
         self.name = name
         # C Info
         self.mc_passes = 100
@@ -97,33 +99,19 @@ class ModelInfo:
         print(f"Generation Mode: {self.gen_mode}")
 
     def print_buffer_info(self):
-        print(f"Max Buffer: {self.max_buffer_required}")
-        for l in self.layers:
-            l.layer_info()
-            #l.buffer_info()
+        #print(f"Max Buffer: {self.max_buffer_required}")
+        t = PrettyTable()
+        for i, l in enumerate(self.layers):
+            r = l.layer_info()
+            r.append(f"{self.buffer_sequence[i]}")
+            t.add_row(r)
+        print(t)
 
-    def internal_buffer_id(self) -> str:
-        return f"{self.name}_internal_buffer"
-
-    def internal_buffer_end_id(self) -> str:
-        return f"{self.internal_buffer_id()}_end" 
-    
     def create_internal_buffers(self) -> str:
-        mid = self.internal_buffer_id() 
-        meid = self.internal_buffer_end_id()
         r = ""
-        r += f"Data_t {mid}[{self.max_buffer_required}];\n"
-        r += f"Data_t* const {meid} = {mid} + {self.max_buffer_required};\n\n"
-        return r
-    
-    def buffer_end_ptr(self, v: int):
-        return f"{self.internal_buffer_end_id()} {v}"
-    
-    def buffer_start_or_end_ptr(self, v: int):
-        if v < 0:
-            return self.buffer_end_ptr(v)
-        else:
-            return self.internal_buffer_id()
+        for i in range(3):
+            r += f"Data_t {self.name}_internal_buffer{i}[{self.buffer_max_sizes[i]}];\n"
+        return r + '\n'
 
     def prune(self):
         aux = []
@@ -157,45 +145,61 @@ class ModelInfo:
         for i, l in enumerate(self.layers):
             if isinstance(l, FoldableInfo) and l.t == "ResidualConv":
                 self.layers[i+1].input_from_residual = True
+                self.layers[i+1].output_to_residual = True
                 l.fold()
         self.prune()
 
+    def find_buffer(self, buffers_use, use):
+        for i, u in enumerate(buffers_use):
+            if u == use:
+                return i
+        print(f"ERROR NO BUFFERS FREE {buffers_use} -- {use}")
+        panic()
 
     def calculate_buffers(self, input_shape: npt.NDArray):
-        prev_out = None
-        prev_shape = None
+        # 0 No use
+        # 1 Last output
+        # 2 Residual
+        buffers_use = [0,0,0]
+        buffers_shape = [None, None, None]
 
         for l in self.layers:
-            if prev_out is None:
 
-                l.in_buffer_shape = input_shape.copy()
-                l.output_shape()
-
-                prev_shape = l.out_buffer_shape
-                l.in_addr = "Input"
-                l.out_addr = 0
-                prev_out = 0
-
+            if isinstance(l, ResidualAddInfo):
+                o = self.find_buffer(buffers_use, 0)
+                i = self.find_buffer(buffers_use, 1)
+                r = self.find_buffer(buffers_use, 2)
+                l.out_addr = o
+                l.in_addr = i
+                l.residual_addr = r
+                buffers_use[o] = 2 if l.output_to_residual else 1
+                buffers_use[i] = 0
+                buffers_use[r] = 0
             else:
+                # Input
+                if l.is_input:
+                    i = 0
+                    l.in_addr = "data_in"
+                    buffers_shape[i] = input_shape
+                else:
+                    i = self.find_buffer(buffers_use, 2 if l.input_from_residual else 1)
+                    l.in_addr = i
 
-                # Automatic flatten layer before linear
-                if isinstance(l, LinearInfo):
-                    prev_shape = np.prod(prev_shape)
+                # Output
+                o = self.find_buffer(buffers_use, 0)
+                l.out_addr = o
 
-                l.in_buffer_shape = prev_shape.copy()
-                l.output_shape()
+                if l.input_from_residual and l.output_to_residual:
+                    buffers_use[i] = 0
+                    buffers_use[o] = 2
+                else:
+                    buffers_use[i] = 2 if l.input_from_residual else 0
+                    buffers_use[o] = 2 if l.output_to_residual else 1
 
-                out = -l.out_buffer_shape.prod() if prev_out == 0 else 0
-                l.in_addr = prev_out
-                l.out_addr = out
-
-                prev_out = out
-                prev_shape = l.out_buffer_shape
-
-        m = np.prod(l.out_buffer_shape)
-        for l in self.layers[1:]:
-            m = max(m, l.buffer_required())
-        self.max_buffer_required = m
+            l.in_buffer_shape = buffers_shape[i]
+            buffers_shape[o] = l.output_shape()
+            self.buffer_max_sizes[o] = max(np.prod(self.buffer_max_sizes[o]), np.prod(buffers_shape[o]))
+            self.buffer_sequence.append(str(buffers_use))
 
         self.buffers_calculated = True
 
@@ -360,8 +364,8 @@ class LayerInfo:
         
         # Create IN/OUT pointers
         if not self.is_input:
-            r += f"Data_t* {lid}_in = {m.buffer_start_or_end_ptr(self.in_addr)};\n"
-        r += f"Data_t* {lid}_out = {m.buffer_start_or_end_ptr(self.out_addr)};\n"
+            r += f"Data_t* {lid}_in = {m.name}_internal_buffer{self.in_addr};\n"
+        r += f"Data_t* {lid}_out = {m.name}_internal_buffer{self.out_addr};\n"
 
         return r
 
@@ -389,29 +393,26 @@ class LayerInfo:
     def buffer_required(self):
         return np.prod(self.in_buffer_shape) + np.prod(self.out_buffer_shape)
 
-    def buffer_info(self):
-        print(f"{self.in_buffer_shape} -> {self.type}(in={self.in_addr}, out={self.out_addr}) -> {self.out_buffer_shape} [{self.buffer_required()}]")
-
     def _info(self):
         return f"? {self.name} {type(self)} "
 
     def layer_info(self):
-        r = ""
-
-        if self.input_from_residual:
-            r += "[Residual ->] "
-
-        r += self._info() + " "
+        r = self._info()
 
         if self.folded_batch_norm is not None:
-            r += "[Folded BatchNorm] "
+            r.append("BatchNorm")
+        else:
+            r.append('-')
 
-        r += f"[F: {self.activation}] "
+        if self.activation is not None:
+            r.append(self.activation)
+        else:
+            r.append('-')
 
-        if self.output_to_residual:
-            r += "[-> Residual] "
+        r.append(self.in_buffer_shape)
+        r.append(self.out_buffer_shape)
 
-        print(r)
+        return r
 
 
 class FoldableInfo(LayerInfo):
@@ -433,6 +434,7 @@ class ResidualAddInfo(LayerInfo):
     def __init__(self, l: LayerInfo):
         super().__init__(l.name)
         self.input_from_residual = True
+        self.residual_addr = None
 
     def output_shape(self):
         self.out_buffer_shape = self.in_buffer_shape.copy()
@@ -445,14 +447,15 @@ class ResidualAddInfo(LayerInfo):
 
         i, j, k = self.in_buffer_shape
 
-        return f"""add_3D{self.activation}(
+        return f"""\tadd_3D(
             {iptr}, last_residual
             {i}, {j}, {k},
-            {lid}_out
+            {lid}_out,
+            {self.activation}_ID
         );\n"""
 
     def _info(self):
-        return f"{self.name} ADD({self.out_buffer_shape})"
+        return [self.name, f"ADD", f"in={self.in_addr}, re={self.residual_addr}, out={self.out_addr}", "-"]
 
 
 class Conv2DInfo(LayerInfo):
@@ -511,7 +514,7 @@ class Conv2DInfo(LayerInfo):
         pdi, pdj = self.calculate_padding()
         stri, strj = self.stride
 
-        return f"""bnn_conv2D_{self.activation}(
+        return f"""\tbnn_conv2D(
             {iptr},
             {i}, {j}, {k}, {self.out_channels}, {self.kernel_size[0]},
             {pdi}, {pdj}, {stri}, {strj},
@@ -519,11 +522,12 @@ class Conv2DInfo(LayerInfo):
             {lid}_sigma_buffer,
             {lid}_mu_bias,
             {lid}_out,
+            {self.activation}_ID,
             BNN_SCALE_FACTOR
         );\n"""
 
     def _info(self):
-        return f"{self.name} Conv2D({self.in_channels}, {self.out_channels}, {self.kernel_size}, {self.stride}, {self.padding}) [{self.mu_buffer.shape}]"
+        return [self.name, f"CONV2D", f"in={self.in_addr}, out={self.out_addr}", f"k={self.kernel_size} s={self.calculate_padding()} p={self.stride}"]
 
 
 class LinearInfo(LayerInfo):
@@ -543,18 +547,19 @@ class LinearInfo(LayerInfo):
         lid = self.layer_id(m)
         iptr = self.input_ptr(m)
         
-        return f"""bnn_linear_{self.activation}(
+        return f"""\tbnn_linear(
             {lid}_sigma_buffer,
             {lid}_mu_buffer,
             {lid}_mu_bias,
             {iptr},
             {lid}_out,
             BNN_SCALE_FACTOR,
-            {self.out_features}, {self.in_features}
+            {self.out_features}, {self.in_features},
+            {self.activation}_ID
         );\n"""
 
     def _info(self):
-        return f"{self.name} Linear({self.in_features}, {self.out_features}) [{self.mu_buffer.shape}]"
+        return [self.name, f"LINEAR", f"in={self.in_addr}, out={self.out_addr}", "-"]
 
 
 class Pool2DInfo(LayerInfo):
@@ -582,7 +587,7 @@ class Pool2DInfo(LayerInfo):
         stride_i = self.kernel_size
         stride_j = self.kernel_size
 
-        return f"""layer_{self.f}_pooling2D(
+        return f"""\tlayer_{self.f}_pooling2D(
             {iptr},
             {i}, {j}, {k}, {stride_i}, {stride_j},
             {lid}_out 
@@ -590,6 +595,6 @@ class Pool2DInfo(LayerInfo):
 
 
     def _info(self):
-        return f"{self.name} {self.f}Pool2D({self.kernel_size})"
-
-
+        stride_i = self.kernel_size
+        stride_j = self.kernel_size
+        return [self.name, f"{self.f.upper()} POOL2D", f"in={self.in_addr}, out={self.out_addr}", f"s=[{stride_i} {stride_j}]"]

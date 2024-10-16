@@ -26,7 +26,7 @@ int main() {
             // Print prediction
             printf("%i, %i, ", i, j);
             for(size_t k = 0; k < output_size; k++) {
-                printf("%f", FIXTOF(output_p[k], S_Softmax));
+                printf("%f", FIXTOF(output_p[k], BNN_SCALE_FACTOR));
                 if (k != output_size - 1) printf(", "); 
             }
             printf("\n");
