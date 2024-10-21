@@ -109,6 +109,7 @@ class RESNET_TINY(nn.Module):
         x = self.stack2(x)
         x = self.stack3(x)
         x = self.avg1(x)
+        x = x.permute((0,2,3,1))
         x = self.flat1(x)
         x = self.fc1(x)
         x = self.sfm1(x)

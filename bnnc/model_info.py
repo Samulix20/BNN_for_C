@@ -124,7 +124,8 @@ class ModelInfo:
 
     def fold_layers(self):
         for i, l in enumerate(self.layers):
-            if isinstance(l, FoldableInfo) and l.t == "BatchNorm2D":
+            if isinstance(l, BatchNorm2DInfo):
+                l.apply_batch_norm(self.layers[i-1])
                 self.layers[i-1].folded_batch_norm = l
                 l.fold()
         self.prune()
@@ -425,9 +426,34 @@ class FoldableInfo(LayerInfo):
 
         if t in ["ReLU", "Softmax"]:
             self.is_activation = True
-    
+
     def fold(self):
         self.t = None
+
+
+class BatchNorm2DInfo(FoldableInfo):
+    def __init__(self, l: LayerInfo):
+        super().__init__(l, "BatchNorm2D")
+
+        # Buffers for batch norm folding
+        self.bn_gamma = None
+        self.bn_beta = None
+        self.bn_var = None
+        self.bn_mean = None
+        # Numerical stability constant
+        self.bn_eps = None
+
+    def bn_coef(self):
+        return self.bn_gamma / np.sqrt(self.bn_var + self.bn_eps)
+
+    def apply_batch_norm(self, l: LayerInfo):
+        bn_coef = self.bn_coef()
+
+        for i, coef in enumerate(bn_coef):
+            l.mu_buffer[i, :] = coef * l.mu_buffer[i, :]
+            l.sigma_buffer[i, :] = coef * l.sigma_buffer[i, :]
+
+        l.mu_bias = bn_coef * (l.mu_bias - self.bn_mean) + self.bn_beta
 
 
 class ResidualAddInfo(LayerInfo):
@@ -439,16 +465,28 @@ class ResidualAddInfo(LayerInfo):
     def output_shape(self):
         self.out_buffer_shape = self.in_buffer_shape.copy()
         return self.out_buffer_shape
-    
+
+    def create_inout_ptrs(self, m: ModelInfo):
+        r = ""
+        lid = self.layer_id(m)
+        
+        # Create IN/OUT pointers
+        r += f"Data_t* {lid}_in = {m.name}_internal_buffer{self.in_addr};\n"
+        r += f"Data_t* {lid}_in_res = {m.name}_internal_buffer{self.residual_addr};\n"
+        r += f"Data_t* {lid}_out = {m.name}_internal_buffer{self.out_addr};\n"
+
+        return r
+
     def cfcall(self, m: ModelInfo):
 
         lid = self.layer_id(m)
         iptr = self.input_ptr(m)
+        rptr = f"{lid}_in_res"
 
         i, j, k = self.in_buffer_shape
 
         return f"""\tadd_3D(
-            {iptr}, last_residual
+            {iptr}, {rptr},
             {i}, {j}, {k},
             {lid}_out,
             {self.activation}_ID
@@ -587,11 +625,23 @@ class Pool2DInfo(LayerInfo):
         stride_i = self.kernel_size
         stride_j = self.kernel_size
 
-        return f"""\tlayer_{self.f}_pooling2D(
-            {iptr},
-            {i}, {j}, {k}, {stride_i}, {stride_j},
-            {lid}_out 
-        );\n"""
+        if self.f == "max":
+
+            return f"""\tlayer_max_pooling2D(
+                {iptr},
+                {i}, {j}, {k}, {stride_i}, {stride_j},
+                {lid}_out 
+            );\n"""
+        
+        elif self.f == "avg":
+
+            p2 = int(log2(stride_i * stride_j))
+
+            return f"""\tlayer_avg_pooling2D_pow2(
+                {iptr},
+                {i}, {j}, {k}, {stride_i}, {stride_j}, {p2},
+                {lid}_out 
+            );\n"""
 
 
     def _info(self):

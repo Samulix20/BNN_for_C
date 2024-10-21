@@ -11,6 +11,8 @@
 #define BNN_SIGMA_DT        int32
 #define BNN_MU_DT           int32
 #define BNN_BIAS_DT         int32
+#define BNN_BIAS_SIGMA_DT   int32
+
 #define BNN_DATA_DT         int32
 
 #define BNN_SCALE_FACTOR 12
@@ -50,6 +52,8 @@ typedef uint64_t uint64;
 typedef BNN_SIGMA_DT Sigma_t;
 typedef BNN_MU_DT Mu_t;
 typedef BNN_BIAS_DT Bias_t;
+typedef BNN_BIAS_SIGMA_DT Bias_Sigma_t;
+
 typedef BNN_DATA_DT Data_t;
 
 // Data type for the internal operations of the library

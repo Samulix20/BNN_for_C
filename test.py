@@ -10,11 +10,12 @@ import numpy as np
 import bnnc
 import bnnc.torch
 
-
-class TrainParams:
+class TestConfig:
+    use_cuda = True
+    model = "RESNET"
     lr = 0.001
     weight_decay = 0.0001
-    num_epochs = 500
+    num_epochs = 5
     batch_size = 128
     bnn_prior_parameters = {
         "prior_mu": 0.0,
@@ -26,45 +27,84 @@ class TrainParams:
         "moped_delta": 0.5,
     }
 
+    def get_model(bnn=False):
+        if TestConfig.model == "RESNET":
+            m = RESNET_TINY()
+        elif TestConfig.model == "B2N2":
+            m = B2N2()
+        elif TestConfig.model == "LENET":
+            m = LENET()
 
-def get_optimizer(model: nn.Module):
-        return torch.optim.Adam(model.parameters(), lr=TrainParams.lr, weight_decay=TrainParams.weight_decay)
+        if bnn:
+            dnn_to_bnn(m, TestConfig.bnn_prior_parameters)
 
-def get_device(use_cuda: bool = True):
-    use_cuda = torch.cuda.is_available() and use_cuda
-    if use_cuda:
-        return torch.device("cuda")
-    else:
-        return torch.device("cpu")
+        return m
 
-def get_data(gray: bool = False):
-    if gray:
-        transform = transforms.Compose([
-            transforms.Grayscale(num_output_channels=1),
-            transforms.ToTensor()  
-        ])
-    else:
-        transform = transforms.ToTensor()
+    def get_device():
+        use_cuda = torch.cuda.is_available() and TestConfig.use_cuda
+        if use_cuda:
+            return torch.device("cuda")
+        else:
+            return torch.device("cpu")
 
-    train_data = torchvision.datasets.CIFAR10('Data', train=True, download=True, transform=transform)
-    test_data = torchvision.datasets.CIFAR10('Data', train=False, transform=transform)
-    train_loader = torch.utils.data.DataLoader(train_data, batch_size=TrainParams.batch_size)
-    test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
-    return (train_data, train_loader, test_data, test_loader)
+    def get_optimizer(model: nn.Module):
+        return torch.optim.Adam(model.parameters(), lr=TestConfig.lr, weight_decay=TestConfig.weight_decay)
+
+    def get_data():
+        gray = not TestConfig.model == "RESNET"
+        
+        if gray:
+            transform = transforms.Compose([
+                transforms.Grayscale(num_output_channels=1),
+                transforms.ToTensor()  
+            ])
+        else:
+            transform = transforms.ToTensor()
+
+        train_data = torchvision.datasets.CIFAR10('Data', train=True, download=True, transform=transform)
+        test_data = torchvision.datasets.CIFAR10('Data', train=False, transform=transform)
+        train_loader = torch.utils.data.DataLoader(train_data, batch_size=TestConfig.batch_size)
+        test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+        return (train_loader, test_loader)
+    
+    def get_logger(bnn=False):
+        t = TestConfig.model
+        if bnn:
+            t = "bnn_" + t
+        return ModelTrainLogger("Model", t)
+
+    def get_all(bnn=False, moped=False, load=False):
+        if moped:
+            m = TestConfig.get_model()
+            l = TestConfig.get_logger()
+            l.load_best_model(m)
+            dnn_to_bnn(m, TestConfig.bnn_prior_parameters)
+            l = TestConfig.get_logger(bnn=True)
+        else:
+            m = TestConfig.get_model(bnn=bnn)
+            l = TestConfig.get_logger(bnn=bnn)
+        
+        if load:
+            l.load_best_model(m)
+
+        return (TestConfig.get_device(), m, TestConfig.get_optimizer(m), l, TestConfig.get_data())
+
 
 def main_train():
-    device = get_device()
-    model = RESNET_TINY()
-    dnn_to_bnn(model, TrainParams.bnn_prior_parameters)
+    device, model, optimizer, logger, (train_loader, test_loader) = TestConfig.get_all()
+
     model.to(device)
+    for epoch in range(1, TestConfig.num_epochs + 1):
+        train(model, train_loader, device, optimizer, logger)
+        test(model, train_loader, device, logger)
+        if logger.is_overfitting():
+            break
+        logger.next_epoch()
 
-    print(model)
+    device, model, optimizer, logger, (train_loader, test_loader) = TestConfig.get_all(moped=True)
 
-    optimizer = get_optimizer(model)
-    train_data, train_loader, test_data , test_loader = get_data()
-    logger = ModelTrainLogger("Model", "BnnResnetTiny")
-
-    for epoch in range(1, TrainParams.num_epochs + 1):
+    model.to(device)
+    for epoch in range(1, TestConfig.num_epochs + 1):
         bayesian_train(model, train_loader, device, optimizer, 1, logger)
         bayesian_test(model, test_loader, device, 100, logger)
         if logger.is_overfitting():
@@ -75,40 +115,28 @@ def main_train():
     logger.info()
 
 def main_ld():
-    device = get_device()
-    model = RESNET_TINY()
-    dnn_to_bnn(model, TrainParams.bnn_prior_parameters)
-    #model.load_state_dict(torch.load('Model/best_BnnResnetTiny', weights_only=True))
+    device, model, optimizer, logger, (train_loader, test_loader) = TestConfig.get_all(bnn=True, load=True)
+    model.to(device)
+    bayesian_test(model, test_loader, device, 100)
 
-    train_data, train_loader, test_data , test_loader = get_data()
+    model.to("cpu")
 
-    model_info = bnnc.torch.info_from_model(model, "bnn_model")
     for data, targets in test_loader:
         pass
-    targets = targets[:10]
     data = data.permute((0,2,3,1))
     input_shape = np.array(data[0].shape)
     flat_data = data.numpy().reshape((data.shape[0], -1))
 
+    model_info = bnnc.torch.info_from_model(model, "bnn_model")
     model_info.calculate_buffers(input_shape)
     model_info.print_buffer_info()
-
-    l, h, w = model_info.create_c_code()
-    print(h)
-
-    #bayesian_test(model, test_loader, device, 100)
 
 def main_c():
     num_workers = 20
     max_img_per_worker = 10
     num_targets = num_workers * max_img_per_worker
-    
-    device = get_device()
-    model = B2N2()
-    dnn_to_bnn(model, TrainParams.bnn_prior_parameters)
-    model.load_state_dict(torch.load('Model/best_B2N2', weights_only=True))
 
-    train_data, train_loader, test_data, test_loader = get_data(gray=True)
+    device, model, optimizer, logger, (train_loader, test_loader) = TestConfig.get_all(bnn=True, load=True)
 
     for data, targets in test_loader:
         pass
@@ -117,15 +145,16 @@ def main_c():
     input_shape = np.array(data[0].shape)
     flat_data = data.numpy().reshape((data.shape[0], -1))
 
-    model_info = bnnc.torch.info_from_model(model, "bnn_model")
-    model_info.calculate_buffers(input_shape)
-    model_info.uniform_weight_transform()
-    run_c_model(model_info, flat_data, num_workers, max_img_per_worker)
-
     model.to(device)
     preds = bayesian_test(model, test_loader, device, 100).cpu().numpy()[:,:num_targets,:]
     pydata = (*bnnc.uncertainty.analyze_predictions(preds, targets), preds)
     pyacc = bnnc.uncertainty.accuracy(pydata[0])
+
+    model.to("cpu")
+    model_info = bnnc.torch.info_from_model(model, "bnn_model")
+    model_info.calculate_buffers(input_shape)
+    model_info.uniform_weight_transform()
+    run_c_model(model_info, flat_data, num_workers, max_img_per_worker)
 
     preds = np.load("Code/predictions.npz")["arr_0"]
     cdata = (*bnnc.uncertainty.analyze_predictions(preds, targets), preds)
@@ -138,6 +167,6 @@ def main_c():
     bnnc.plot.compare_predictions_plots(pydata, cdata, targets, "Figures")
 
 if __name__ == "__main__":
+    #main_train()
     #main_ld()
     main_c()
-    #main_train()

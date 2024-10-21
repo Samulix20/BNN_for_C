@@ -28,6 +28,9 @@ class ModelTrainLogger:
     def save_best_model(self, model: nn.Module):
         torch.save(model.state_dict(), f"{self.folder}/best_{self.name}")
 
+    def load_best_model(self, model: nn.Module):
+        model.load_state_dict(torch.load(f"{self.folder}/best_{self.name}", weights_only=True))
+
     def log_train(self, loss, acc):
         if self.best_train is None or loss < self.best_train:
             self.best_train = loss

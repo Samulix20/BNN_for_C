@@ -114,7 +114,12 @@ def info_from_model(model: nn.Module, name: str) -> ModelInfo:
         elif isinstance(t, nn.Softmax):
             l = FoldableInfo(l, "Softmax")
         elif isinstance(t, nn.BatchNorm2d):
-            l = FoldableInfo(l, "BatchNorm2D")
+            l = BatchNorm2DInfo(l)
+            l.bn_gamma = t.weight.detach().numpy()
+            l.bn_beta = t.bias.detach().numpy()
+            l.bn_mean = t.running_mean.detach().numpy()
+            l.bn_var = t.running_var.detach().numpy()
+            l.bn_eps = t.eps
         elif isinstance(t, ResidualBlock):
             l = FoldableInfo(l, "ResidualBlock")
         elif isinstance(t, ResidualConv):

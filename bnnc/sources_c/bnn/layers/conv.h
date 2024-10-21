@@ -8,7 +8,8 @@ inline void bnn_conv2D (
 	size_t stride_i, size_t stride_j,
 	Mu_t* mu_kernels, 
     Sigma_t* sigma_kernels, 
-    Bias_t* v_q_bias,
+    Bias_t* mu_bias,
+	Bias_Sigma_t* sigma_bias, 
 	Data_t* t_q_output,
     enum Activation_Id f_act,
 	Scale_t S
@@ -27,12 +28,15 @@ inline void bnn_conv2D (
 
 		Mu_t* t_q_mu = mu_kernels + idx;
 		Sigma_t* t_q_sigma = sigma_kernels + idx;
-		Iop_t q_bias = (Iop_t) v_q_bias[t]; 
+		
+		Iop_t q_mu_bias = (Iop_t) mu_bias[t]; 
+		Iop_t q_sigma_bias = (Iop_t) sigma_bias[t]; 
+		Iop_t bias = get_weight(q_sigma_bias, q_mu_bias, S);
 
 		// for each submatrix
 		size_t i, j;
-		for(i = 0; i < out_ilen; i += stride_i) {
-			for(j = 0; j < out_jlen; j += stride_j) {
+		for(i = 0; i < out_ilen; i++) {
+			for(j = 0; j < out_jlen; j++) {
 				
 				Iop_t acc = 0;
 				
@@ -43,8 +47,8 @@ inline void bnn_conv2D (
 						for(tt = 0; tt < tlen; tt++) {
 
 							// Input index strides i,j
-							size_t ii = i + ki;
-							size_t jj = j + kj;
+							size_t ii = (i * stride_i) + ki;
+							size_t jj = (j * stride_j) + kj;
 
 							// Check left pad element
 							if ((ii < pad_i) || (jj < pad_j)) {
