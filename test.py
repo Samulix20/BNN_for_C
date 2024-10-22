@@ -10,13 +10,25 @@ import numpy as np
 import bnnc
 import bnnc.torch
 
+def nll_loss_sum(x, target):
+    return F.nll_loss(torch.log(x), target, reduction="sum")
+
+def mse_loss_sum(x, target):
+    return F.mse_loss(x, target, reduction="sum")
+
 class TestConfig:
-    use_cuda = True
     model = "B2N2"
+
+    # Use GPU
+    use_cuda = True
+
+    # Training parameters
     lr = 0.001
     weight_decay = 0.0001
-    num_epochs = 200
+    num_epochs = 5
     batch_size = 128
+
+    # BNN conversion hyperparmeters
     bnn_prior_parameters = {
         "prior_mu": 0.0,
         "prior_sigma": 1.0,
@@ -26,17 +38,25 @@ class TestConfig:
         "moped_enable": True,  # True to initialize mu/sigma from the pretrained dnn weights
         "moped_delta": 0.5,
     }
+
+    # C config
     num_workers = 20
-    max_img_per_worker = 5000
+    max_img_per_worker = 10
+    fixed_bits = 10
 
     def figure_dir():
-        d = f"Figures/{TestConfig.model}"
+        d = f"Figures/{TestConfig.model}-{TestConfig.fixed_bits}"
         os.system(f"mkdir -p {d}")
         return d
 
     def get_model(bnn=False):
+        lf = nll_loss_sum
+
         if TestConfig.model == "RESNET":
             m = RESNET_TINY()
+        elif TestConfig.model == "AUTOENCODER":
+            m = AUTOENCODER_TINY()
+            lf = mse_loss_sum
         elif TestConfig.model == "B2N2":
             m = B2N2()
         elif TestConfig.model == "LENET":
@@ -45,7 +65,7 @@ class TestConfig:
         if bnn:
             dnn_to_bnn(m, TestConfig.bnn_prior_parameters)
 
-        return m
+        return m, lf
 
     def get_device():
         use_cuda = torch.cuda.is_available() and TestConfig.use_cuda
@@ -63,7 +83,7 @@ class TestConfig:
         if gray:
             transform = transforms.Compose([
                 transforms.Grayscale(num_output_channels=1),
-                transforms.ToTensor()  
+                transforms.ToTensor()
             ])
         else:
             transform = transforms.ToTensor()
@@ -82,38 +102,38 @@ class TestConfig:
 
     def get_all(bnn=False, moped=False, load=False):
         if moped:
-            m = TestConfig.get_model()
+            m, lf = TestConfig.get_model()
             l = TestConfig.get_logger()
             l.load_best_model(m)
             dnn_to_bnn(m, TestConfig.bnn_prior_parameters)
             l = TestConfig.get_logger(bnn=True)
         else:
-            m = TestConfig.get_model(bnn=bnn)
+            m, lf = TestConfig.get_model(bnn=bnn)
             l = TestConfig.get_logger(bnn=bnn)
         
         if load:
             l.load_best_model(m)
 
-        return (TestConfig.get_device(), m, TestConfig.get_optimizer(m), l, TestConfig.get_data())
+        return (TestConfig.get_device(), m, TestConfig.get_optimizer(m), lf, l, TestConfig.get_data())
 
 
 def main_train():
-    device, model, optimizer, logger, (train_loader, test_loader) = TestConfig.get_all()
+    device, model, optimizer, loss, logger, (train_loader, test_loader) = TestConfig.get_all()
 
     model.to(device)
     for epoch in range(1, TestConfig.num_epochs + 1):
-        train(model, train_loader, device, optimizer, logger)
-        test(model, train_loader, device, logger)
+        train(model, train_loader, device, optimizer, loss, logger)
+        test(model, train_loader, device, loss, logger)
         if logger.is_overfitting():
             break
         logger.next_epoch()
 
-    device, model, optimizer, logger, (train_loader, test_loader) = TestConfig.get_all(moped=True)
+    device, model, optimizer, loss, logger, (train_loader, test_loader) = TestConfig.get_all(moped=True)
 
     model.to(device)
     for epoch in range(1, TestConfig.num_epochs + 1):
-        bayesian_train(model, train_loader, device, optimizer, 1, logger)
-        bayesian_test(model, test_loader, device, 100, logger)
+        bayesian_train(model, train_loader, device, optimizer, loss, 1, logger)
+        bayesian_test(model, test_loader, device, loss, 100, logger)
         if logger.is_overfitting():
             break
         logger.next_epoch()
@@ -122,9 +142,9 @@ def main_train():
     logger.info()
 
 def main_ld():
-    device, model, optimizer, logger, (train_loader, test_loader) = TestConfig.get_all(bnn=True, load=True)
+    device, model, optimizer, loss, logger, (train_loader, test_loader) = TestConfig.get_all(bnn=True, load=True)
     model.to(device)
-    bayesian_test(model, test_loader, device, 100)
+    bayesian_test(model, test_loader, device, loss, 100)
 
     model.to("cpu")
 
@@ -143,7 +163,7 @@ def main_c():
     max_img_per_worker = TestConfig.max_img_per_worker
     num_targets = num_workers * max_img_per_worker
 
-    device, model, optimizer, logger, (train_loader, test_loader) = TestConfig.get_all(bnn=True, load=True)
+    device, model, optimizer, loss, logger, (train_loader, test_loader) = TestConfig.get_all(bnn=True, load=True)
 
     for data, targets in test_loader:
         pass
@@ -153,14 +173,16 @@ def main_c():
     flat_data = data.numpy().reshape((data.shape[0], -1))
 
     model.to(device)
-    preds = bayesian_test(model, test_loader, device, 100).cpu().numpy()[:,:num_targets,:]
+    preds = bayesian_test(model, test_loader, device, loss, 100).cpu().numpy()[:,:num_targets,:]
     pydata = (*bnnc.uncertainty.analyze_predictions(preds, targets), preds)
     pyacc = bnnc.uncertainty.accuracy(pydata[0])
 
     model.to("cpu")
+    print(f"Model: {TestConfig.model}")
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
     model_info.calculate_buffers(input_shape)
     model_info.uniform_weight_transform()
+    model_info.fixed_bits = TestConfig.fixed_bits
     run_c_model(model_info, flat_data, num_workers, max_img_per_worker)
 
     preds = np.load("Code/predictions.npz")["arr_0"]
@@ -171,16 +193,10 @@ def main_c():
 
     print(f"PY ACC {pyacc} -- C ACC {cacc} -- MATCH {match_ratio}")
 
-
     bnnc.plot.compare_predictions_plots(pydata, cdata, targets, TestConfig.figure_dir())
 
 if __name__ == "__main__":
-    TestConfig.model = "LENET"
-    main_ld()
-    main_c()
-    TestConfig.model = "B2N2"
-    main_ld()
-    main_c()
-    TestConfig.model = "RESNET"
+    TestConfig.model="RESNET"
+    main_train()
     main_ld()
     main_c()

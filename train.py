@@ -65,7 +65,7 @@ def get_batch_correct(model_output, target):
 
 # Training utils
 
-def train(model: nn.Module, loader, device, optimizer, logger: ModelTrainLogger = None):
+def train(model: nn.Module, loader, device, optimizer, loss_func, logger: ModelTrainLogger = None):
     model.train()
     train_loss = 0
     train_correct = 0
@@ -75,7 +75,7 @@ def train(model: nn.Module, loader, device, optimizer, logger: ModelTrainLogger 
         
         data, target = data.to(device), target.to(device)
         output = model(data)
-        loss = F.nll_loss(torch.log(output), target, reduction="sum")
+        loss = loss_func(output, target)
 
         loss.backward()
         optimizer.step()
@@ -87,7 +87,7 @@ def train(model: nn.Module, loader, device, optimizer, logger: ModelTrainLogger 
     train_acc = train_correct / len(loader.dataset)
     logger.log_train(train_loss, train_acc)
 
-def bayesian_train(model: nn.Module, loader, device, optimizer, num_mc, logger: ModelTrainLogger = None):
+def bayesian_train(model: nn.Module, loader, device, optimizer, loss_func, num_mc, logger: ModelTrainLogger = None):
     model.train()
     train_loss = 0
     train_correct = 0
@@ -105,7 +105,7 @@ def bayesian_train(model: nn.Module, loader, device, optimizer, num_mc, logger: 
             kl_list.append(get_kl_loss(model))
         output = torch.mean(torch.stack(output_list), dim=0)
         kl = torch.mean(torch.stack(kl_list), dim=0)
-        loss = F.nll_loss(torch.log(output), target, reduction='sum') + (kl / batch_size)
+        loss = loss_func(output, target) + (kl / batch_size)
         
         loss.backward()
         optimizer.step()
@@ -118,7 +118,7 @@ def bayesian_train(model: nn.Module, loader, device, optimizer, num_mc, logger: 
     logger.log_train(train_loss, train_acc)
 
 
-def test(model: nn.Module, loader, device, logger: ModelTrainLogger = None):
+def test(model: nn.Module, loader, device, loss_func, logger: ModelTrainLogger = None):
     model.eval()
     test_loss = 0
     test_correct = 0
@@ -127,7 +127,7 @@ def test(model: nn.Module, loader, device, logger: ModelTrainLogger = None):
         for data, target in loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            loss = F.nll_loss(torch.log(output), target, reduction='sum')
+            loss = loss_func(output, target)
 
             test_correct += get_batch_correct(output, target)
             test_loss += loss.item()
@@ -142,7 +142,7 @@ def test(model: nn.Module, loader, device, logger: ModelTrainLogger = None):
     
     return 
 
-def bayesian_test(model: nn.Module, loader, device, num_mc, logger: ModelTrainLogger = None):
+def bayesian_test(model: nn.Module, loader, device, loss_func, num_mc, logger: ModelTrainLogger = None):
     model.eval()
     test_loss = 0
     test_correct = 0
@@ -160,7 +160,7 @@ def bayesian_test(model: nn.Module, loader, device, num_mc, logger: ModelTrainLo
             raw_output = torch.stack(output_list)
             output = torch.mean(raw_output, dim=0)
             kl = torch.mean(torch.stack(kl_list), dim=0)
-            loss = F.nll_loss(torch.log(output), target, reduction='sum') + (kl / batch_size)
+            loss = loss_func(output, target) + (kl / batch_size)
 
             test_correct += get_batch_correct(output, target)
             test_loss += loss.item()

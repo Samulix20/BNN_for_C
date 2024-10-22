@@ -10,3 +10,4 @@ pyenv
 
 # Tmp/Log Files
 *.log
+*_old
