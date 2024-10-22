@@ -31,7 +31,7 @@ inline void bnn_conv2D (
 		
 		Iop_t q_mu_bias = (Iop_t) mu_bias[t]; 
 		Iop_t q_sigma_bias = (Iop_t) sigma_bias[t]; 
-		Iop_t bias = get_weight(q_sigma_bias, q_mu_bias, S);
+		Iop_t q_bias = get_weight(q_sigma_bias, q_mu_bias, S);
 
 		// for each submatrix
 		size_t i, j;

@@ -10,8 +10,8 @@
 
 #define BNN_SIGMA_DT        int32
 #define BNN_MU_DT           int32
-#define BNN_BIAS_DT         int32
 #define BNN_BIAS_SIGMA_DT   int32
+#define BNN_BIAS_DT         int32
 
 #define BNN_DATA_DT         int32
 

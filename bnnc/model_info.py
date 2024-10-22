@@ -89,7 +89,8 @@ class ModelInfo:
         self.data_types = {
             "MU": "int32",
             "SIGMA": "int32",
-            "BIAS": "int32",
+            "MU_BIAS": "int32",
+            "SIGMA_BIAS": "int32",
             "DATA": "int32"
         }
 
@@ -204,18 +205,27 @@ class ModelInfo:
 
         self.buffers_calculated = True
 
+    def _uniform(self, mu, sigma):
+        b = sigma * sqrt(12.0)
+        a = mu - (b / 2)
+        return (a, b)
+
     def uniform_weight_transform(self):
         self.gen_mode = "Uniform"
 
         for l in self.layers:
             if not(isinstance(l, Conv2DInfo) or isinstance(l, LinearInfo)):
                 continue
+            # W
+            l.mu_buffer, l.sigma_buffer = self._uniform(l.mu_buffer, l.sigma_buffer)
+            # B
+            l.mu_bias, l.sigma_bias = self._uniform(l.mu_bias, l.sigma_bias)
 
-            b = l.sigma_buffer * sqrt(12.0)
-            a = l.mu_buffer - (b / 2)
 
-            l.sigma_buffer = b
-            l.mu_buffer = a
+    def _bernoulli(self, mu, sigma):
+        p = mu**2 / (mu**2 + sigma**2)
+        q = (mu**2 + sigma**2) / mu
+        return (p, q)
 
     def bernoulli_weight_transform(self):
         self.gen_mode = "Bernoulli"
@@ -223,12 +233,10 @@ class ModelInfo:
         for l in self.layers:
             if not(isinstance(l, Conv2DInfo) or isinstance(l, LinearInfo)):
                 continue
-
-            p = l.mu_buffer**2 / (l.mu_buffer**2 + l.sigma_buffer**2)
-            q = (l.mu_buffer**2 + l.sigma_buffer**2) / l.mu_buffer
-
-            l.sigma_buffer = q
-            l.mu_buffer = p
+            # W
+            l.mu_buffer, l.sigma_buffer = self._bernoulli(l.mu_buffer, l.sigma_buffer)
+            # B
+            l.mu_bias, l.sigma_bias = self._bernoulli(l.mu_bias, l.sigma_bias)
 
     def to_fixed(self):
         for l in self.layers:
@@ -241,7 +249,7 @@ class ModelInfo:
             l.sigma_bias = to_fixed(l.sigma_bias, self.fixed_bits)
 
     def find_data_types(self):
-        data_range = [None, None, None]
+        data_range = [None, None, None, None]
         for l in self.layers:
             if not(isinstance(l, Conv2DInfo) or isinstance(l, LinearInfo)):
                 continue
@@ -252,9 +260,10 @@ class ModelInfo:
             data_range[1] = update_data_range(data_range[1], l.sigma_buffer)
             # Data range b mu
             data_range[2] = update_data_range(data_range[2], l.mu_bias)
-            # Data range b sigma (Not yet supported)
+            # Data range b sigma
+            data_range[3] = update_data_range(data_range[3], l.sigma_bias)
         
-        for (min_v, max_v), t in zip(data_range, ["MU", "SIGMA", "BIAS"]):
+        for (min_v, max_v), t in zip(data_range, ["MU", "SIGMA", "MU_BIAS", "SIGMA_BIAS"]):
             signed = min_v < 0
             absmax_v = max(abs(min_v), max_v)
             self.data_types[t] = get_datatype(signed, absmax_v)
@@ -266,7 +275,8 @@ class ModelInfo:
         lib_config += "#define BNN_CONFIG_H\n"
         lib_config += f"#define BNN_SIGMA_DT        {self.data_types["SIGMA"]}\n"
         lib_config += f"#define BNN_MU_DT           {self.data_types["MU"]}\n"
-        lib_config += f"#define BNN_BIAS_DT         {self.data_types["BIAS"]}\n"
+        lib_config += f"#define BNN_BIAS_SIGMA_DT   {self.data_types["SIGMA_BIAS"]}\n"
+        lib_config += f"#define BNN_BIAS_DT         {self.data_types["MU_BIAS"]}\n"
         lib_config += f"#define BNN_DATA_DT         {self.data_types["DATA"]}\n"
         lib_config += f"#define BNN_SCALE_FACTOR {self.fixed_bits}\n"
         lib_config += f"#define BNN_INTERNAL_GEN {C_INTERNAL_GENERATORS[self.gen_mode]}\n"
@@ -381,9 +391,11 @@ class LayerInfo:
             r += ndarray_to_c(self.sigma_buffer, f"{lid}_sigma_buffer", m.data_types["SIGMA"])
         
         if self.mu_bias is not None:
-            r += ndarray_to_c(self.mu_bias, f"{lid}_mu_bias", m.data_types["BIAS"])
+            r += ndarray_to_c(self.mu_bias, f"{lid}_mu_bias", m.data_types["MU_BIAS"])
 
-        #r += ndarray_to_c(l.sigma_bias, f"{lid}_sigma_bias", 8, "int32")
+        if self.sigma_bias is not None:
+            r += ndarray_to_c(self.sigma_bias, f"{lid}_sigma_bias", m.data_types["SIGMA_BIAS"])
+
         return r
 
     # Output shape size
@@ -454,6 +466,7 @@ class BatchNorm2DInfo(FoldableInfo):
             l.sigma_buffer[i, :] = coef * l.sigma_buffer[i, :]
 
         l.mu_bias = bn_coef * (l.mu_bias - self.bn_mean) + self.bn_beta
+        l.sigma_bias = bn_coef * l.sigma_bias
 
 
 class ResidualAddInfo(LayerInfo):
@@ -559,6 +572,7 @@ class Conv2DInfo(LayerInfo):
             {lid}_mu_buffer,
             {lid}_sigma_buffer,
             {lid}_mu_bias,
+            {lid}_sigma_bias,
             {lid}_out,
             {self.activation}_ID,
             BNN_SCALE_FACTOR
@@ -589,6 +603,7 @@ class LinearInfo(LayerInfo):
             {lid}_sigma_buffer,
             {lid}_mu_buffer,
             {lid}_mu_bias,
+            {lid}_sigma_bias,
             {iptr},
             {lid}_out,
             BNN_SCALE_FACTOR,

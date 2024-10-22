@@ -12,10 +12,10 @@ import bnnc.torch
 
 class TestConfig:
     use_cuda = True
-    model = "RESNET"
+    model = "B2N2"
     lr = 0.001
     weight_decay = 0.0001
-    num_epochs = 5
+    num_epochs = 200
     batch_size = 128
     bnn_prior_parameters = {
         "prior_mu": 0.0,
@@ -26,6 +26,13 @@ class TestConfig:
         "moped_enable": True,  # True to initialize mu/sigma from the pretrained dnn weights
         "moped_delta": 0.5,
     }
+    num_workers = 20
+    max_img_per_worker = 5000
+
+    def figure_dir():
+        d = f"Figures/{TestConfig.model}"
+        os.system(f"mkdir -p {d}")
+        return d
 
     def get_model(bnn=False):
         if TestConfig.model == "RESNET":
@@ -132,8 +139,8 @@ def main_ld():
     model_info.print_buffer_info()
 
 def main_c():
-    num_workers = 20
-    max_img_per_worker = 10
+    num_workers = TestConfig.num_workers
+    max_img_per_worker = TestConfig.max_img_per_worker
     num_targets = num_workers * max_img_per_worker
 
     device, model, optimizer, logger, (train_loader, test_loader) = TestConfig.get_all(bnn=True, load=True)
@@ -164,9 +171,16 @@ def main_c():
 
     print(f"PY ACC {pyacc} -- C ACC {cacc} -- MATCH {match_ratio}")
 
-    bnnc.plot.compare_predictions_plots(pydata, cdata, targets, "Figures")
+
+    bnnc.plot.compare_predictions_plots(pydata, cdata, targets, TestConfig.figure_dir())
 
 if __name__ == "__main__":
-    #main_train()
-    #main_ld()
+    TestConfig.model = "LENET"
+    main_ld()
+    main_c()
+    TestConfig.model = "B2N2"
+    main_ld()
+    main_c()
+    TestConfig.model = "RESNET"
+    main_ld()
     main_c()
