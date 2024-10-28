@@ -4,6 +4,8 @@ import torch.nn.functional as F
 
 from bayesian_torch.models.dnn_to_bnn import dnn_to_bnn, get_kl_loss
 
+from math import isnan
+
 class ModelTrainLogger:
     def __init__(self, folder: str, name: str):
 
@@ -19,6 +21,8 @@ class ModelTrainLogger:
         self.folder = folder
         self.name = name
 
+        self.nan_found = False
+
     def next_epoch(self):
         self.epoch += 1
 
@@ -32,6 +36,9 @@ class ModelTrainLogger:
         model.load_state_dict(torch.load(f"{self.folder}/best_{self.name}", weights_only=True))
 
     def log_train(self, loss, acc):
+        if isnan(loss):
+            self.nan_found = True
+
         if self.best_train is None or loss < self.best_train:
             self.best_train = loss
             self.best_train_epoch = self.epoch
@@ -53,7 +60,7 @@ class ModelTrainLogger:
         print(f"Test Epoch {self.best_test_epoch} loss: {self.best_test:4f}")
 
     def is_overfitting(self, threshold: int = 5):
-        return self.test_worse > threshold
+        return self.test_worse > threshold or self.nan_found
 
     def log_msg(loss, acc):
         print(f'Test: Average loss: {loss:.4f}, Accuracy: {100. * acc:.2f}%')

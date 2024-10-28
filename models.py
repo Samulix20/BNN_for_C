@@ -1,38 +1,9 @@
 import torch
 import torch.nn as nn
 
-from bnnc.torch import ResidualBlock
+from bnnc.torch import ResidualBlock, BasicBlock
 
 # Model definitions
-
-class BasicBlock(nn.Module):
-    
-    def __init__(self, layer: nn.Module, activation: str, flatten: bool = False, pool: nn.Module = None):
-        super().__init__()
-        self.layer = layer
-    
-        if activation == "relu":
-            self.activation = nn.ReLU()
-        elif activation == "softmax":
-            self.activation = nn.Softmax(dim=1)
-
-        self.pool = pool
-
-        self.flatten = flatten
-
-    def forward(self, x):
-
-        if self.flatten:
-            x = x.permute((0,2,3,1)).flatten(1)
-
-        x = self.layer(x)
-        x = self.activation(x)
-
-        if self.pool is not None:
-            x = self.pool(x)
-
-        return x
-
 
 class B2N2(nn.Module):
 

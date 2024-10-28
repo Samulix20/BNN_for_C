@@ -47,8 +47,6 @@ def parallel_c(x: tuple[int, npt.NDArray, bnnc.model_info.ModelInfo]):
 
 def run_c_model(model_info, test_data, num_workers, max_img_per_worker):
 
-    #model_info.bernoulli_weight_transform()
-
     l, h, w = model_info.create_c_code()
     with open("Code/bnn_config.h", "w") as f:
         f.write(l)

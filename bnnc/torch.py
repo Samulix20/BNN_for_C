@@ -9,6 +9,34 @@ from .model_info import *
 
 # Residual block, required for creating the residual buffers
 
+class BasicBlock(nn.Module):
+    
+    def __init__(self, layer: nn.Module, activation: str, flatten: bool = False, pool: nn.Module = None):
+        super().__init__()
+        self.layer = layer
+    
+        if activation == "relu":
+            self.activation = nn.ReLU()
+        elif activation == "softmax":
+            self.activation = nn.Softmax(dim=1)
+
+        self.pool = pool
+
+        self.flatten = flatten
+
+    def forward(self, x):
+
+        if self.flatten:
+            x = x.permute((0,2,3,1)).flatten(1)
+
+        x = self.layer(x)
+        x = self.activation(x)
+
+        if self.pool is not None:
+            x = self.pool(x)
+
+        return x
+
 class AddResidual(nn.Module):
     def __init__(self):
         super().__init__()
@@ -106,13 +134,11 @@ def info_from_model(model: nn.Module, name: str) -> ModelInfo:
             l.mu_bias = t.mu_bias.detach().numpy()
             l.sigma_bias = F.softplus(t.rho_bias).detach().numpy()
 
-        elif isinstance(t, AddResidual):
-            l = ResidualAddInfo(l)
-
         elif isinstance(t, nn.ReLU):
             l = FoldableInfo(l, "ReLU")
         elif isinstance(t, nn.Softmax):
             l = FoldableInfo(l, "Softmax")
+
         elif isinstance(t, nn.BatchNorm2d):
             l = BatchNorm2DInfo(l)
             l.bn_gamma = t.weight.detach().numpy()
@@ -120,10 +146,13 @@ def info_from_model(model: nn.Module, name: str) -> ModelInfo:
             l.bn_mean = t.running_mean.detach().numpy()
             l.bn_var = t.running_var.detach().numpy()
             l.bn_eps = t.eps
+
         elif isinstance(t, ResidualBlock):
             l = FoldableInfo(l, "ResidualBlock")
         elif isinstance(t, ResidualConv):
             l = FoldableInfo(l, "ResidualConv")
+        elif isinstance(t, AddResidual):
+            l = ResidualAddInfo(l)
 
         else:
             # Not implemented layers

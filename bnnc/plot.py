@@ -311,6 +311,32 @@ def plot_prediction_uncertainty_double(plots_data, result_dir):
     return fig, axes
 
 
+def accuracy_vs_uncertainty_data(metrics, nths = 50):
+
+    nsamples = metrics.shape[0]
+
+    metrics_correct = metrics[metrics[:,0] == 1]
+    metrics_error = metrics[metrics[:,0] == 0]
+
+    step_size = 1 / nths
+    uths = np.arange(0, 1 + step_size, step_size)
+
+    r = np.zeros((nths, 2))
+
+    for i, uth in enumerate(uths):
+        nau = metrics_correct[metrics_correct[:,4] > uth].shape[0]
+        nac = metrics_correct[metrics_correct[:,4] <= uth].shape[0]
+        nic = metrics_error[metrics_error[:,4] > uth].shape[0]
+        niu = metrics_error[metrics_error[:,4] <= uth].shape[0]
+
+        p_acc_cert = nac / (nac + nic)
+        p_unc_inn = niu / (nic + niu)
+
+        r[i, 0] = p_acc_cert
+        r[i, 1] = p_unc_inn
+
+    return uths, r
+
 def free_plot_memory():
     pl.close("all")
 
