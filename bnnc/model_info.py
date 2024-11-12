@@ -101,7 +101,7 @@ class ModelInfo:
 
     def print_buffer_info(self):
         #print(f"Max Buffer: {self.max_buffer_required}")
-        t = PrettyTable()
+        t = PrettyTable(border=False, header=False)
         for i, l in enumerate(self.layers):
             r = l.layer_info()
             r.append(f"{self.buffer_sequence[i]}")
@@ -278,9 +278,9 @@ class ModelInfo:
         lib_config += f"#define BNN_BIAS_SIGMA_DT   {self.data_types["SIGMA_BIAS"]}\n"
         lib_config += f"#define BNN_BIAS_DT         {self.data_types["MU_BIAS"]}\n"
         lib_config += f"#define BNN_DATA_DT         {self.data_types["DATA"]}\n"
-        lib_config += f"#define BNN_SCALE_FACTOR {self.fixed_bits}\n"
-        lib_config += f"#define BNN_INTERNAL_GEN {C_INTERNAL_GENERATORS[self.gen_mode]}\n"
-        lib_config += f"#define BNN_MC_PASSES {self.mc_passes}\n"
+        lib_config += f"#define BNN_SCALE_FACTOR    {self.fixed_bits}\n"
+        lib_config += f"#define BNN_INTERNAL_GEN    {C_INTERNAL_GENERATORS[self.gen_mode]}\n"
+        lib_config += f"#define BNN_MC_PASSES       {self.mc_passes}\n"
         lib_config += "#endif\n"
         return lib_config
 

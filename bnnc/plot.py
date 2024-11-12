@@ -2,11 +2,13 @@ import matplotlib.pyplot as pl
 
 import numpy as np
 
-COLOR_1 = "#11008f"
+COLOR_1 = "#5B8EFD"
 COLOR_1_LIGHT = "#8566bd"
 
-COLOR_2 = "#ffa000"
+COLOR_2 = "#FFB00D"
 COLOR_2_LIGHT = "#ffc57a"
+
+COLOR_3 = "#DD217D"
 
 def accuracy_by_samples(preds, labels):
 
@@ -311,7 +313,7 @@ def plot_prediction_uncertainty_double(plots_data, result_dir):
     return fig, axes
 
 
-def accuracy_vs_uncertainty_data(metrics, nths = 50):
+def acc_cert_unc_inn_data(metrics, nths = 50):
 
     nsamples = metrics.shape[0]
 
@@ -319,23 +321,119 @@ def accuracy_vs_uncertainty_data(metrics, nths = 50):
     metrics_error = metrics[metrics[:,0] == 0]
 
     step_size = 1 / nths
-    uths = np.arange(0, 1 + step_size, step_size)
+    uths = np.arange(step_size, 1 + step_size, step_size)
 
-    r = np.zeros((nths, 2))
+    r = np.zeros((uths.shape[0], 3))
 
     for i, uth in enumerate(uths):
         nau = metrics_correct[metrics_correct[:,4] > uth].shape[0]
         nac = metrics_correct[metrics_correct[:,4] <= uth].shape[0]
-        nic = metrics_error[metrics_error[:,4] > uth].shape[0]
-        niu = metrics_error[metrics_error[:,4] <= uth].shape[0]
+        nic = metrics_error[metrics_error[:,4] <= uth].shape[0]
+        niu = metrics_error[metrics_error[:,4] > uth].shape[0]
 
         p_acc_cert = nac / (nac + nic)
         p_unc_inn = niu / (nic + niu)
 
         r[i, 0] = p_acc_cert
         r[i, 1] = p_unc_inn
+        r[i, 2] = (nac + nic) / nsamples
 
     return uths, r
+
+
+def acc_cert_unc_inc_plot(data):
+    x, y = data
+
+    fig, axes = pl.subplots(1,2)
+
+    ax = axes[0]
+    ax.plot(x, y[:,0], color=COLOR_1)
+    ax.plot(x, y[:,2], "--", color=COLOR_1)
+    ax.grid(visible=True, axis='y', zorder=0)
+    ax.legend([
+        "p(accurate|certain)",
+        "p(certain)"
+    ])
+
+    ax = axes[1]
+    ax.plot(x, y[:,1], "-.", color=COLOR_1)
+    ax.legend(["p(uncertain|innacurate)"])
+    ax.grid(visible=True, axis='y', zorder=0)
+
+    fig.supxlabel(r"Uncertainty Threshold ($u_{th}$)")
+    fig.tight_layout()
+    return fig, axes
+
+
+def acc_cert_unc_inc_plot_double(plots_data, axes, second_color=COLOR_1):
+    (x, y), (_, z) = plots_data
+
+    ax = axes[0]
+    ax.plot(x, y[:,0], color=COLOR_2)
+    ax.plot(x, z[:,0], color=second_color)
+    ax.plot(x, y[:,2], "--", color=COLOR_2)
+    ax.plot(x, z[:,2], "--", color=second_color)
+    ax.grid(visible=True, axis='y', zorder=0)
+
+    ax = axes[1]
+    ax.plot(x, y[:,1], "-.", color=COLOR_2)
+    ax.plot(x, z[:,1], "-.", color=second_color)
+    ax.grid(visible=True, axis='y', zorder=0)
+
+
+def same_violin_plot(data_a, data_b, diff_mask, axes, position, second_color=COLOR_1):
+
+    fig = None
+    if axes is None:
+        fig, axes = pl.subplots(1,1)
+
+    ax = axes[0]
+    plot = ax.violinplot(data_a[0][:,4][~diff_mask], positions=[position], side="low", showextrema=False)
+    for pc in plot["bodies"]:
+        pc.set_color(COLOR_2)
+    plot = ax.violinplot(data_b[0][:,4][~diff_mask], positions=[position], side="high", showextrema=False)
+    for pc in plot["bodies"]:
+        pc.set_color(second_color)
+    ax.set_ylim((-0.05,1.05))
+    ax.set_ylabel("Uncertainty")
+
+    ax = axes[1]
+    plot = ax.violinplot(data_a[0][:,5][~diff_mask], positions=[position], side="low", showextrema=False)
+    for pc in plot["bodies"]:
+        pc.set_color(COLOR_2)
+    plot = ax.violinplot(data_b[0][:,5][~diff_mask], positions=[position], side="high", showextrema=False)
+    for pc in plot["bodies"]:
+        pc.set_color(second_color)
+    ax.set_ylim((-0.05,1.05))
+    ax.set_ylabel("Confidence")
+
+    if fig is not None:
+        fig.tight_layout()
+        return fig, axes
+
+
+def diff_violin_plot(data_a, data_b, diff_mask, axes, position, second_color=COLOR_1):
+
+    ax = axes[0]
+    plot = ax.violinplot(data_a[0][:,4][diff_mask], positions=[position], side="low", showextrema=False)
+    for pc in plot["bodies"]:
+        pc.set_color(COLOR_2)
+    plot = ax.violinplot(data_b[0][:,4][diff_mask], positions=[position], side="high", showextrema=False)
+    for pc in plot["bodies"]:
+        pc.set_color(second_color)
+    ax.set_ylim((-0.05,1.05))
+    ax.set_ylabel("Uncertainty")
+
+    ax = axes[1]
+    plot = ax.violinplot(data_a[0][:,5][diff_mask], positions=[position], side="low", showextrema=False)
+    for pc in plot["bodies"]:
+        pc.set_color(COLOR_2)
+    plot = ax.violinplot(data_b[0][:,5][diff_mask], positions=[position], side="high", showextrema=False)
+    for pc in plot["bodies"]:
+        pc.set_color(second_color)
+    ax.set_ylim((-0.05,1.05))
+    ax.set_ylabel("Confidence")
+
 
 def free_plot_memory():
     pl.close("all")

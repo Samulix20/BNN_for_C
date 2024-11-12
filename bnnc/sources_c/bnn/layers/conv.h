@@ -28,10 +28,6 @@ inline void bnn_conv2D (
 
 		Mu_t* t_q_mu = mu_kernels + idx;
 		Sigma_t* t_q_sigma = sigma_kernels + idx;
-		
-		Iop_t q_mu_bias = (Iop_t) mu_bias[t]; 
-		Iop_t q_sigma_bias = (Iop_t) sigma_bias[t]; 
-		Iop_t q_bias = get_weight(q_sigma_bias, q_mu_bias, S);
 
 		// for each submatrix
 		size_t i, j;
@@ -73,17 +69,22 @@ inline void bnn_conv2D (
 							Iop_t q_sigma = (Iop_t) t_q_sigma[idx];
 							Iop_t q_mu = (Iop_t) t_q_mu[idx];
 
-							Iop_t w = get_weight(q_sigma, q_mu, S);
-
 							idx = flat_idx_3d(ii, jj, tt, jlen, tlen);
 							Iop_t q_x = (Iop_t) t_q_input[idx];
-							acc += w * q_x;
+
+							acc = bnn_mac(q_sigma, q_mu, q_x, acc, S);
 						}
 					}
 				}
 
-				Iop_t q_acc = acc >> S;
-				Data_t q_o = (Data_t) (q_acc + q_bias);
+				acc = acc >> S;
+
+				Iop_t q_mu_bias = (Iop_t) mu_bias[t]; 
+				Iop_t q_sigma_bias = (Iop_t) sigma_bias[t]; 
+
+				acc = bnn_add(q_sigma_bias, q_mu_bias, acc, S);
+
+				Iop_t q_o = acc;
 
 				idx = flat_idx_3d(i, j, t, out_jlen, out_tlen);
 				

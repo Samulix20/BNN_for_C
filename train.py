@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from bayesian_torch.models.dnn_to_bnn import dnn_to_bnn, get_kl_loss
+import numpy as np
+
+from bayesian_torch.models.dnn_to_bnn import get_kl_loss
 
 from math import isnan
 
@@ -181,3 +183,69 @@ def bayesian_test(model: nn.Module, loader, device, loss_func, num_mc, logger: M
         ModelTrainLogger.log_msg(test_loss, test_acc)
 
     return raw_output
+
+
+import testconf
+
+class TrainParams:
+    # Training parameters
+    lr = 0.001
+    weight_decay = 0.0001
+    num_epochs = 1
+    batch_size = 128
+
+
+def train_model(modelname:str):
+    print(f"Model: {modelname}")
+
+    device = testconf.get_device()
+    train_data, test_data = testconf.get_data(modelname)
+    train_loader = torch.utils.data.DataLoader(train_data, batch_size=TrainParams.batch_size)
+    test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+
+    model, loss = testconf.get_model(modelname, "untrained")
+    optimizer = torch.optim.Adam(model.parameters(), lr=TrainParams.lr, weight_decay=TrainParams.weight_decay)
+    logger = ModelTrainLogger("Model", modelname)
+
+    # MOPED training framework
+
+    model.to(device)
+    for epoch in range(1, TrainParams.num_epochs + 1):
+        train(model, train_loader, device, optimizer, loss, logger)
+        test(model, train_loader, device, loss, logger)
+        if logger.is_overfitting():
+            break
+        logger.next_epoch()
+
+    model, loss = testconf.get_model(modelname, "trained")
+    optimizer = torch.optim.Adam(model.parameters(), lr=TrainParams.lr, weight_decay=TrainParams.weight_decay)
+    logger = ModelTrainLogger("Model", f"bnn_{modelname}")
+
+    model.to(device)
+    for epoch in range(1, TrainParams.num_epochs + 1):
+        bayesian_train(model, train_loader, device, optimizer, loss, 1, logger)
+        bayesian_test(model, test_loader, device, loss, 100, logger)
+        if logger.is_overfitting():
+            break
+        logger.next_epoch()
+
+    logger.info()
+
+def test_model(modelname:str):
+    print(f"Model: {modelname}")
+
+    device = testconf.get_device()
+    _, test_data = testconf.get_data(modelname)
+    test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+
+    model, loss = testconf.get_model(modelname, "bnn")
+    model.to(device)
+    preds = bayesian_test(model, test_loader, device, loss, 100).cpu().numpy()
+    np.savez(testconf.baseline_path(modelname), preds)
+
+if __name__ == "__main__":
+    testconf.init_folders()
+    
+    for model in testconf.Conf.model_list:
+        #train_model(model)
+        test_model(model)

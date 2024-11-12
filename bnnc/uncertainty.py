@@ -116,7 +116,7 @@ def analyze_predictions(predictions: npt.NDArray, labels: npt.NDArray) -> tuple[
 
         # Global uncertainty (H) -- Predictive entropy
         h = -np.sum(avg * np.log(avg, where=(avg > 0)))
-        norm_h = h / np.log(num_classes)
+        norm_h = normalize_global_uncertainty(h, num_classes)
 
         # Expected entropy (Ep)
         ep = np.mean(-np.sum(p * np.log(p, where=(p > 0)), axis=1))
@@ -142,10 +142,4 @@ def match_ratio(a: npt.NDArray, b: npt.NDArray) -> float:
     match_mask = a[:,1] == b[:,1]
     diff_mask = ~match_mask
 
-    avg_a_confidence = np.mean(a[:,5][diff_mask])
-    avg_b_confidence = np.mean(b[:,5][diff_mask])
-
-    avg_a_u = np.mean(a[:,4][diff_mask])
-    avg_b_u = np.mean(b[:,4][diff_mask])
-
-    return np.sum(match_mask) / a.shape[0], avg_a_confidence, avg_b_confidence, avg_a_u, avg_b_u
+    return np.sum(match_mask) / a.shape[0], diff_mask
