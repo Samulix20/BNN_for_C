@@ -248,4 +248,8 @@ if __name__ == "__main__":
     
     for model in testconf.Conf.model_list:
         #train_model(model)
+        #test_model(model)
+        pass
+
+    for model in testconf.Conf.hyper_model_list:
         test_model(model)

@@ -1,5 +1,7 @@
 import os
 
+import numpy as np
+
 import torch
 import torch.nn.functional as F
 
@@ -25,7 +27,17 @@ class Conf:
         "moped_delta": 0.5,
     }
 
-    model_list = ["LENET", "B2N2", "RESNET"]
+    hyper_model_list = ["BO", "IP", "KSC", "PU", "SV"]
+
+    model_list = hyper_model_list + ["LENET", "B2N2", "RESNET"]
+
+    hyper_models_params = {
+        "BO": {"num_in": 145, "num_out": 14},
+        "IP": {"num_in": 200, "num_out": 16},
+        "KSC": {"num_in": 176, "num_out": 13},
+        "PU": {"num_in": 103, "num_out": 9},
+        "SV": {"num_in": 204, "num_out": 16},
+    }
 
 def init_folders():
     os.system(f"""
@@ -49,7 +61,26 @@ def get_device():
     else:
         return torch.device("cpu")
 
+class HyperDataset():
+    def __init__(self, data, targets):
+        self.data = data
+        self.targets = targets
+
+    def __len__(self):
+        return len(self.targets)
+
+    def __getitem__(self, idx):
+        return torch.from_numpy(self.data[idx]).float(), self.targets[idx]
+
+
 def get_data(model:str):
+
+    if model in Conf.hyper_model_list:
+        dts = np.load(f"Data/{model}.npz")
+        train_data = HyperDataset(dts["train_data"], dts["train_targets"])
+        test_data = HyperDataset(dts["test_data"], dts["test_targets"])
+        return train_data, test_data
+
     if not model == "RESNET":
         transform = transforms.Compose([
             transforms.Grayscale(num_output_channels=1),
@@ -75,6 +106,8 @@ def get_model(model:str, state:str):
         m = models.B2N2()
     elif model == "LENET":
         m = models.LENET()
+    elif model in Conf.hyper_model_list:
+        m = models.HYPER(**Conf.hyper_models_params[model])
 
     if state == "untrained":
         pass

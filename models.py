@@ -5,6 +5,23 @@ from bnnc.torch import ResidualBlock, BasicBlock
 
 # Model definitions
 
+class HYPER(nn.Module):
+    
+    def __init__(self, num_in, num_out):
+        super().__init__()
+        self.l = torch.nn.Sequential(
+            nn.Linear(num_in, 32),
+            nn.ReLU(),
+            nn.Linear(32, 16),
+            nn.ReLU(),
+            nn.Linear(16, num_out),
+            nn.Softmax(dim=1)
+        )
+
+    def forward(self, x):
+        x = self.l(x)
+        return x
+
 class B2N2(nn.Module):
 
     def __init__(self):

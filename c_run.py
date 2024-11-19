@@ -55,7 +55,8 @@ def run_c_model(model_info, test_data, num_workers, max_img_per_worker):
         f.write(w)
 
     num_targets = num_workers * max_img_per_worker
-    split_data = np.split(test_data[:num_targets], num_workers)
+    num_targets = test_data[:num_targets].shape[0]
+    split_data = np.array_split(test_data[:num_targets], num_workers)
 
     model_info.print_cinfo()
 
@@ -70,14 +71,14 @@ def run_c_model(model_info, test_data, num_workers, max_img_per_worker):
         preds[preds < 0] = 0
         elapsed_time = time.strftime("%H:%M:%S", time.gmtime(time.time() - time_start))
         print(f"{num_targets} img C preditions done in {elapsed_time} using {num_workers} threads")
-        np.savez("Code/predictions", preds)
+        np.savez_compressed("Code/predictions", preds)
 
 import testconf
 
 class CrunParams:
     # C config
-    num_workers = 20
-    max_img_per_worker = 500
+    num_workers = 25
+    max_img_per_worker = 5000
 
 
 def eval_model(modelname:str, generation_method:str, fixed_bits:int):
@@ -87,7 +88,11 @@ def eval_model(modelname:str, generation_method:str, fixed_bits:int):
     test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
     for data, targets in test_loader:
         pass
-    data = data.permute((0,2,3,1)).detach().numpy()
+    
+    if modelname not in testconf.Conf.hyper_model_list:
+        data = data.permute((0,2,3,1))
+
+    data = data.detach().numpy()
     targets = targets.detach().numpy()
     input_shape = np.array(data[0].shape)
     flat_data = data.reshape((data.shape[0], -1))
@@ -108,18 +113,6 @@ def eval_model(modelname:str, generation_method:str, fixed_bits:int):
     model_info.fixed_bits = fixed_bits
     run_c_model(model_info, flat_data, CrunParams.num_workers, CrunParams.max_img_per_worker)
     os.system(f"mv Code/predictions.npz {testconf.prediction_path(modelname, generation_method, fixed_bits)}")
-
-    preds = np.load(testconf.prediction_path(modelname, generation_method, fixed_bits))["arr_0"]
-
-    targets = np.array(test_data.targets)[:preds.shape[1]]
-
-    cdata = (*bnnc.uncertainty.analyze_predictions(preds, targets), preds)
-    cacc = bnnc.uncertainty.accuracy(cdata[0])
-    cece, cuce = bnnc.uncertainty.calibration_errors(cdata[0])
-
-    print("ACC %", cacc * 100)
-    print("ECE %", cece * 100)
-    print("UCE %", cuce * 100)
 
 if __name__ == "__main__":
     testconf.init_folders()
