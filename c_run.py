@@ -46,14 +46,6 @@ def parallel_c(x: tuple[int, npt.NDArray, bnnc.model_info.ModelInfo]):
 
 def run_c_model(model_info, test_data, num_workers, max_img_per_worker):
 
-    l, h, w = model_info.create_c_code()
-    with open("Code/bnn_config.h", "w") as f:
-        f.write(l)
-    with open("Code/bnn_model.h", "w") as f:
-        f.write(h)
-    with open("Code/bnn_model_weights.h", "w") as f:
-        f.write(w)
-
     num_targets = num_workers * max_img_per_worker
     num_targets = test_data[:num_targets].shape[0]
     split_data = np.array_split(test_data[:num_targets], num_workers)
@@ -80,6 +72,59 @@ class CrunParams:
     num_workers = 25
     max_img_per_worker = 5000
 
+def generate_code_only(modelname:str, generation_method:str, fixed_bits:int):
+    _, test_data = testconf.get_data(modelname)
+    test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+    for data, _ in test_loader:
+        pass
+    
+    if modelname not in testconf.Conf.hyper_model_list:
+        data = data.permute((0,2,3,1))
+
+    # Only 1 test data required
+    data = data.detach().numpy()[:1,:]
+    input_shape = np.array(data[0].shape)
+    flat_data = data.reshape((data.shape[0], -1))
+
+    model, _ = testconf.get_model(modelname, "bnn")
+
+    model_info = bnnc.torch.info_from_model(model, "bnn_model")
+    model_info.calculate_buffers(input_shape)
+
+    if generation_method == "uniform":
+        model_info.uniform_weight_transform()
+    elif generation_method == "bernoulli":
+        model_info.bernoulli_weight_transform()
+    elif generation_method == "gaussian":
+        pass
+    elif generation_method == "custom":
+        model_info.uniform_weight_transform()
+        model_info.gen_mode = "Custom"
+
+    model_info.fixed_bits = fixed_bits
+    model_info.mc_passes = 1
+
+    l, h, w = model_info.create_c_code()
+
+    target_folder = f"Code/bnn_{modelname}_{generation_method}"
+    os.system(f"mkdir -p {target_folder}")
+    
+    with open(f"{target_folder}/bnn_config.h", "w") as f:
+        f.write(l)
+    with open(f"{target_folder}/bnn_model.h", "w") as f:
+        f.write(h)
+    with open(f"{target_folder}/bnn_model_weights.h", "w") as f:
+        f.write(w)
+    
+    d = model_info.create_c_data(flat_data)
+    with open(f"{target_folder}/test_data.h", "w") as f:
+        f.write(d)
+
+    os.system(f"""
+        cp -r {bnnc.model_info.c_sources_abspath}/bnn {target_folder}
+        cp {bnnc.model_info.c_sources_abspath}/Makefile {target_folder}
+        cp {bnnc.model_info.c_sources_abspath}/test_main.c {target_folder}/main.c
+    """)
 
 def eval_model(modelname:str, generation_method:str, fixed_bits:int):
     print(f"Model: {modelname}")
@@ -111,12 +156,23 @@ def eval_model(modelname:str, generation_method:str, fixed_bits:int):
         pass
 
     model_info.fixed_bits = fixed_bits
+
+    l, h, w = model_info.create_c_code()
+    with open("Code/bnn_config.h", "w") as f:
+        f.write(l)
+    with open("Code/bnn_model.h", "w") as f:
+        f.write(h)
+    with open("Code/bnn_model_weights.h", "w") as f:
+        f.write(w)
+
     run_c_model(model_info, flat_data, CrunParams.num_workers, CrunParams.max_img_per_worker)
     os.system(f"mv Code/predictions.npz {testconf.prediction_path(modelname, generation_method, fixed_bits)}")
 
 if __name__ == "__main__":
     testconf.init_folders()
-
     for model in testconf.Conf.model_list:
-        eval_model(model, "gaussian", 10)
+        #eval_model(model, "gaussian", 10)
+        #eval_model(model, "uniform", 10)
+        generate_code_only(model, "custom", 10)
+        generate_code_only(model, "uniform", 10)
         print('')

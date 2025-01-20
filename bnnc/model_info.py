@@ -24,6 +24,7 @@ C_DATA_TYPE_RANGES = {
 C_INTERNAL_GENERATORS = {
     "Normal": 0,
     "Uniform": 1,
+    "Custom": 2,
     "Bernoulli": 3
 }
 

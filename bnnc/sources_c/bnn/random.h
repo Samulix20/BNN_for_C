@@ -48,22 +48,28 @@ inline Iop_t clt_normal_sample(Scale_t S) {
 	#######################
 	WEIGHT SAMPLING WRAPPER
 	#######################
-*/ 
+*/
 
 inline Iop_t generator(Scale_t S) {
-    Iop_t g;
-
     #if BNN_INTERNAL_GEN == 0
-		g = clt_normal_sample(S);
+
+		Iop_t g = clt_normal_sample(S);
+
 	#elif BNN_INTERNAL_GEN == 1
-        g = uniform_sample(S);
+
+        Iop_t g = uniform_sample(S);
+
     #elif BNN_INTERNAL_GEN == 2
-        #include <riscv/custom.h>
-        #if 12 > BNN_SCALE_FACTOR
-            g = gen_num() >> (12 - S);
-        #else
-            g = gen_num() << (S - 12);
-        #endif 
+        // Custom rng generator
+
+        Iop_t g = 0;
+        asm (
+            ".insn r CUSTOM_0, 0, 0, %0, x0, x0"
+            : "=r" (g)
+            :
+            : "memory"
+        );
+
     #endif
 
     return g;
