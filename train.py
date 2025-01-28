@@ -247,9 +247,8 @@ if __name__ == "__main__":
     testconf.init_folders()
     
     for model in testconf.Conf.model_list:
-        #train_model(model)
-        #test_model(model)
-        pass
+        train_model(model)
+        test_model(model)
 
     for model in testconf.Conf.hyper_model_list:
         test_model(model)

@@ -171,8 +171,8 @@ def eval_model(modelname:str, generation_method:str, fixed_bits:int):
 if __name__ == "__main__":
     testconf.init_folders()
     for model in testconf.Conf.model_list:
-        #eval_model(model, "gaussian", 10)
-        #eval_model(model, "uniform", 10)
+        eval_model(model, "gaussian", 10)
+        eval_model(model, "uniform", 10)
         generate_code_only(model, "custom", 10)
         generate_code_only(model, "uniform", 10)
         print('')
