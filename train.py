@@ -243,7 +243,7 @@ def test_model(modelname:str):
     preds = bayesian_test(model, test_loader, device, loss, 100).cpu().numpy()
     np.savez(testconf.baseline_path(modelname), preds)
 
-if __name__ == "__main__":
+def __fu():
     testconf.init_folders()
     
     for model in testconf.Conf.model_list:
@@ -253,3 +253,80 @@ if __name__ == "__main__":
 
     for model in testconf.Conf.hyper_model_list:
         test_model(model)
+
+import bnnc
+
+def new_bayesian_test(model: nn.Module, loader, device):
+    model.to(device)
+    model.eval()
+    test_loss = 0
+    test_correct = 0
+
+    with torch.no_grad():
+        for data, target in loader:
+            data, target = data.to(device), target.to(device)
+            raw_output = model(data)
+            output = torch.mean(raw_output, dim=0)
+            test_correct += get_batch_correct(output, target)
+    
+    test_acc = test_correct / len(loader.dataset)
+    ModelTrainLogger.log_msg(0, test_acc)
+
+    return raw_output
+
+
+if __name__ == "__main__":
+
+    for modelname in testconf.Conf.hyper_model_list:
+
+        print(modelname)
+
+        device = testconf.get_device()
+        _, test_data = testconf.get_data(modelname)
+        test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+
+        old_model, loss = testconf.get_model(modelname, "bnn")
+        old_model.to(device)
+        print("OLD")
+        oro = bayesian_test(old_model, test_loader, device, loss, 100).cpu().numpy()
+
+        for data, targets in test_loader:
+            pass
+        targets = targets.numpy()
+
+        aop = bnnc.metrics.analyze_predictions(oro, targets)
+        print(aop["ece"], aop["uce"], aop["re"])
+
+        model = testconf.models.NEW_HYPER(old_model, 100)
+        print("NEW")
+        nro = new_bayesian_test(model, test_loader, device).cpu().numpy()
+        anp = bnnc.metrics.analyze_predictions(nro, targets)
+        print(anp["ece"], anp["uce"], anp["re"])
+    
+    modelname = "LENET"
+
+    print(modelname)
+
+    device = testconf.get_device()
+    _, test_data = testconf.get_data(modelname)
+    test_loader = torch.utils.data.DataLoader(test_data, batch_size=len(test_data))
+
+    old_model, loss = testconf.get_model(modelname, "bnn")
+    old_model.to(device)
+    print("OLD")
+    oro = bayesian_test(old_model, test_loader, device, loss, 100).cpu().numpy()
+
+    for data, targets in test_loader:
+        pass
+    targets = targets.numpy()
+
+    aop = bnnc.metrics.analyze_predictions(oro, targets)
+    print(aop["ece"], aop["uce"], aop["re"])
+
+    model = testconf.models.NEW_LENET(old_model, 100)
+    print("NEW")
+    _, test_data = testconf.get_data(modelname)
+    test_loader = torch.utils.data.DataLoader(test_data, batch_size=500)
+    nro = new_bayesian_test(model, test_loader, device).cpu().numpy()
+    anp = bnnc.metrics.analyze_predictions(nro, targets)
+    print(anp["ece"], anp["uce"], anp["re"])
