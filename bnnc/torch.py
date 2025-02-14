@@ -7,8 +7,6 @@ from bayesian_torch.layers.flipout_layers import conv_flipout as bnn_conv, linea
 
 from .model_info import *
 
-# Residual block, required for creating the residual buffers
-
 class BasicBlock(nn.Module):
     
     def __init__(self, layer: nn.Module, activation: str, flatten: bool = False, pool: nn.Module = None):
@@ -36,6 +34,8 @@ class BasicBlock(nn.Module):
             x = self.pool(x)
 
         return x
+
+# Residual block, required for creating the residual buffers
 
 class AddResidual(nn.Module):
     def __init__(self):
@@ -91,6 +91,9 @@ class ResidualBlock(nn.Module):
         return y
 
 
+# V0. Compresion layers
+# They calculate the distribution of the outputs and then resample them
+
 class CompresionModel(nn.Module):
 
     def __init__(self, layer_list):
@@ -130,9 +133,6 @@ class CompresionLayer(nn.Module):
         y_sigma = torch.std(y, 0)
         
         return y_mu, y_sigma, y
-
-
-
 
 
 def info_from_model(model: nn.Module, name: str) -> ModelInfo:

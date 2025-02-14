@@ -28,6 +28,7 @@ inline void bnn_linear(
 			acc = bnn_mac(q_sigma, q_mu, q_x, acc, S);
 		}
 
+		// If fixed point precission used scale must be fixed
 		acc = acc >> S;
 
 		Iop_t q_mu_bias = (Iop_t) mu_bias[i];

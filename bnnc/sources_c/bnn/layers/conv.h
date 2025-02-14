@@ -88,7 +88,7 @@ inline void bnn_conv2D (
 
 				idx = flat_idx_3d(i, j, t, out_jlen, out_tlen);
 				
-                // Apply f_act
+				// Apply f_act
 				if (f_act == ReLU_ID) {
 					q_o = ReLU(q_o);
 				}
