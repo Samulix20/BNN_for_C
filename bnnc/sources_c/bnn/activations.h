@@ -3,7 +3,6 @@
 
 #include "types.h"
 #include "random.h"
-#include <cstddef>
 
 enum Activation_Id {None_ID = 0, ReLU_ID = 1, Softmax_ID = 2};
 

@@ -44,9 +44,13 @@ int main() {
             for(size_t k = 0; k < output_size; k++) {
                 
                 #if PROFILING_MODE == 0
-                printf("%f", FIXTOF(output_p[k], BNN_SCALE_FACTOR));
+                    #ifdef FLOATING_TYPES
+                        printf("%f", output_p[k]);
+                    #else
+                        printf("%f", FIXTOF(output_p[k], BNN_SCALE_FACTOR));
+                    #endif
                 #else
-                printf("%i", output_p[k]);
+                    printf("%i", output_p[k]);
                 #endif
                 
                 if (k != output_size - 1) printf(", "); 

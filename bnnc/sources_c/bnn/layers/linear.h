@@ -29,7 +29,9 @@ inline void bnn_linear(
 		}
 
 		// If fixed point precission used scale must be fixed
-		acc = acc >> S;
+		#ifndef FLOATING_TYPES
+			acc >>= S;
+		#endif
 
 		Iop_t q_mu_bias = (Iop_t) mu_bias[i];
 		Iop_t q_sigma_bias = (Iop_t) sigma_bias[i];

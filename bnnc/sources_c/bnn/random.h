@@ -20,7 +20,7 @@ inline uint32 xorshift32(uint32 seed) {
     __attribute__((always_inline))
     inline Iop_t uniform_sample() {
         bnn_random_seed = xorshift32(bnn_random_seed);
-        return (Iop_t) (bnn_random_seed >> 1) / (1 << 31);
+        return (Iop_t) (bnn_random_seed >> 1) / (uint32_t) (1 << 31);
     }
 
 #else
@@ -53,7 +53,7 @@ inline Iop_t clt_normal_sample(Scale_t S) {
         acc += uniform_sample(S);
     }
     // Center value
-    acc -= (6 << S); // Scale 6 to S
+    acc -= (Iop_t) (6 << S); // Scale 6 to S
     return acc;
 }
 

@@ -101,8 +101,12 @@ def generate_code_only(modelname:str, generation_method:str, fixed_bits:int):
         model_info.uniform_weight_transform()
         model_info.gen_mode = "Custom"
 
-    model_info.fixed_bits = fixed_bits
-    model_info.mc_passes = 1
+    # Fixed point
+    #model_info.fixed_bits = fixed_bits
+    #model_info.mc_passes = 1
+
+    # Floating point
+    model_info.floating_point = True
 
     l, h, w = model_info.create_c_code()
 
@@ -145,6 +149,10 @@ def eval_model(modelname:str, generation_method:str, fixed_bits:int):
     model, _ = testconf.get_model(modelname, "bnn")
 
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
+    
+    # Floating point
+    model_info.floating_point = True
+
     model_info.calculate_buffers(input_shape)
     #model_info.print_buffer_info()
 
@@ -170,9 +178,6 @@ def eval_model(modelname:str, generation_method:str, fixed_bits:int):
 
 if __name__ == "__main__":
     testconf.init_folders()
-    for model in testconf.Conf.model_list:
-        #eval_model(model, "gaussian", 10)
-        #eval_model(model, "uniform", 10)
-        generate_code_only(model, "custom", 10)
-        generate_code_only(model, "uniform", 10)
+    for model in ["LENET", "RESNET"]:
+        eval_model(model, "uniform", 10)
         print('')

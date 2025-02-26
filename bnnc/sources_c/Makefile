@@ -4,7 +4,7 @@
 CC := gcc
 DUMP := objdump
 
-CFLAGS = -O3 -I.
+CFLAGS = -O3 -I. -lm
 
 CSRCS := $(shell find -name '*.c')
 OBJS := $(CSRCS:%.c=%.o) $(ASRCS:%.S=%.o)

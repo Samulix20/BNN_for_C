@@ -58,53 +58,66 @@ inline Iop_t __fx_bnn_add(Iop_t q_sigma, Iop_t q_mu, Iop_t acc, Scale_t S) {
 	return acc;
 }
 
+// Internal kernels
+
+__attribute__((always_inline))
+inline Iop_t sample_weight_clt(Iop_t q_sigma, Iop_t q_mu, Scale_t S) {
+	Iop_t sample = clt_normal_sample(S);
+	Iop_t aux = q_sigma * sample;
+	#ifndef FLOATING_TYPES
+		aux >>= S;
+	#endif
+	return aux + q_mu;
+}
+
+__attribute__((always_inline))
+inline Iop_t sample_weight_uniform(Iop_t q_sigma, Iop_t q_mu, Scale_t S) {
+	Iop_t sample = uniform_sample(S);
+	Iop_t aux = q_sigma * sample;
+	#ifndef FLOATING_TYPES
+		aux >>= S;
+	#endif
+	return aux + q_mu;
+}
+
+__attribute__((always_inline))
+inline Iop_t sample_weight_bernoulli(Iop_t q_sigma, Iop_t q_mu, Scale_t S) {
+	Iop_t sample = bernoulli_sample(S, q_mu);
+	Iop_t aux = q_sigma * sample;
+	#ifndef FLOATING_TYPES
+		aux >>= S;
+	#endif
+	return aux;
+}
+
+__attribute__((always_inline))
+inline Iop_t sample_weight(Iop_t q_sigma, Iop_t q_mu, Scale_t S) {
+	#if BNN_INTERNAL_GEN == 0
+		return sample_weight_clt(q_sigma, q_mu, S);
+	#elif BNN_INTERNAL_GEN == 1
+		return sample_weight_uniform(q_sigma, q_mu, S);
+	#elif BNN_INTERNAL_GEN == 3
+		return sample_weight_bernoulli(q_sigma, q_mu, S);
+	#endif
+}
+
 __attribute__((always_inline))
 inline Iop_t bnn_mac(Iop_t q_sigma, Iop_t q_mu, Iop_t q_x, Iop_t acc, Scale_t S) {
-	#if BNN_INTERNAL_GEN == 0
-
-		Iop_t w = q_sigma * clt_normal_sample(S) + q_mu;
-		acc += w * q_x;
-		return acc;
-
-	#elif BNN_INTERNAL_GEN == 1
-
-		Iop_t w = q_sigma * uniform_sample(S) + q_mu;
-		acc += w * q_x;
-		return acc;
-
+	
+	#if BNN_INTERNAL_GEN == 0 || BNN_INTERNAL_GEN == 1 || BNN_INTERNAL_GEN == 3
+		return acc + sample_weight(q_sigma, q_mu, S) * q_x;
 	#elif BNN_INTERNAL_GEN == 2
-
 		return __fx_bnn_mac(q_sigma, q_mu, q_x, acc, S);
-
-	#elif BNN_INTERNAL_GEN == 3
-
-		acc += q_sigma * bernoulli_sample(S, q_mu);
-		return acc;
-
 	#endif
 }
 
 __attribute__((always_inline))
 inline Iop_t bnn_add(Iop_t q_sigma, Iop_t q_mu, Iop_t acc, Scale_t S) {
-	#if BNN_INTERNAL_GEN == 0
-
-		Iop_t q_bias = q_sigma * clt_normal_sample(S) + q_mu;
-		return acc + q_bias;
-
-	#elif BNN_INTERNAL_GEN == 1
-
-		Iop_t q_bias = q_sigma * uniform_sample(S) + q_mu;
-		return acc + q_bias;
-
+	
+	#if BNN_INTERNAL_GEN == 0 || BNN_INTERNAL_GEN == 1 || BNN_INTERNAL_GEN == 3
+		return acc + sample_weight(q_sigma, q_mu, S);
 	#elif BNN_INTERNAL_GEN == 2
-
 		return __fx_bnn_add(q_sigma, q_mu, acc, S);
-
-	#elif BNN_INTERNAL_GEN == 3
-
-		Iop_t q_bias = q_sigma * bernoulli_sample(S, q_mu);
-		return acc + q_bias;
-
 	#endif
 }
 

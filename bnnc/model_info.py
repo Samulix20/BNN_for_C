@@ -47,8 +47,11 @@ def to_fixed(arr: npt.NDArray, fbits: int) -> npt.NDArray:
     return (arr * (2**fbits)).astype(int)
 
 def saturate_to_data_type(x: npt.NDArray, data_type: str) -> npt.NDArray:
-    drange = C_DATA_TYPE_RANGES[data_type]
-    return np.clip(x, drange[0], drange[1]).astype(int)
+    if data_type in ['float', 'double']:
+        return x
+    else:
+        drange = C_DATA_TYPE_RANGES[data_type]
+        return np.clip(x, drange[0], drange[1]).astype(int)
 
 def update_data_range(prev_range: tuple[float,float], arr: npt.NDArray) -> tuple[float,float]:
     if prev_range is None:
@@ -86,6 +89,7 @@ class ModelInfo:
         # C Info
         self.mc_passes = 100
         self.gen_mode = "Normal"
+        self.floating_point = False
         self.fixed_bits = 10
         self.data_types = {
             "MU": "int32",
@@ -240,6 +244,10 @@ class ModelInfo:
             l.mu_bias, l.sigma_bias = self._bernoulli(l.mu_bias, l.sigma_bias)
 
     def to_fixed(self):
+        # If using floating point do not transfrom to fixed point
+        if self.floating_point:
+            return
+        
         for l in self.layers:
             if not(isinstance(l, Conv2DInfo) or isinstance(l, LinearInfo)):
                 continue
@@ -265,9 +273,15 @@ class ModelInfo:
             data_range[3] = update_data_range(data_range[3], l.sigma_bias)
         
         for (min_v, max_v), t in zip(data_range, ["MU", "SIGMA", "MU_BIAS", "SIGMA_BIAS"]):
-            signed = min_v < 0
-            absmax_v = max(abs(min_v), max_v)
-            self.data_types[t] = get_datatype(signed, absmax_v)
+            if self.floating_point:
+                self.data_types[t] = "float"
+            else:
+                signed = min_v < 0
+                absmax_v = max(abs(min_v), max_v)
+                self.data_types[t] = get_datatype(signed, absmax_v)
+
+        if self.floating_point:
+            self.data_types["DATA"] = "float"
 
 
     def create_lib_config(self) -> str:
@@ -279,7 +293,13 @@ class ModelInfo:
         lib_config += f"#define BNN_BIAS_SIGMA_DT   {self.data_types["SIGMA_BIAS"]}\n"
         lib_config += f"#define BNN_BIAS_DT         {self.data_types["MU_BIAS"]}\n"
         lib_config += f"#define BNN_DATA_DT         {self.data_types["DATA"]}\n"
-        lib_config += f"#define BNN_SCALE_FACTOR    {self.fixed_bits}\n"
+        
+        if self.floating_point:
+            lib_config += f"#define FLOATING_TYPES\n"
+            lib_config += f"#define BNN_SCALE_FACTOR    0\n"
+        else:
+            lib_config += f"#define BNN_SCALE_FACTOR    {self.fixed_bits}\n"
+
         lib_config += f"#define BNN_INTERNAL_GEN    {C_INTERNAL_GENERATORS[self.gen_mode]}\n"
         lib_config += f"#define BNN_MC_PASSES       {self.mc_passes}\n"
         lib_config += "#endif\n"
@@ -317,12 +337,14 @@ class ModelInfo:
 
     def create_c_data(self, data: npt.NDArray) -> str:
         # data [num_data x num_features]
-
         # find data range/type
 
-        num_data, num_features = data.shape
-        c_data = ndarray_to_c(to_fixed(data, self.fixed_bits,), "data_matrix", "int32")
+        if self.floating_point:
+            c_data = ndarray_to_c(data, "data_matrix", "float")
+        else:
+            c_data = ndarray_to_c(to_fixed(data, self.fixed_bits), "data_matrix", "int32")
 
+        num_data, num_features = data.shape
         r = "#include <bnn/types.h>\n"
         r += f"#define NUM_DATA {num_data}\n#define FEATURES_PER_DATA {num_features}"
 

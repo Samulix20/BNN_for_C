@@ -77,7 +77,9 @@ inline void bnn_conv2D (
 					}
 				}
 
-				acc = acc >> S;
+				#ifndef FLOATING_TYPES
+					acc = acc >> S;
+				#endif
 
 				Iop_t q_mu_bias = (Iop_t) mu_bias[t]; 
 				Iop_t q_sigma_bias = (Iop_t) sigma_bias[t]; 
