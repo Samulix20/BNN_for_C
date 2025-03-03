@@ -50,8 +50,6 @@ def run_c_model(model_info, test_data, num_workers, max_img_per_worker):
     num_targets = test_data[:num_targets].shape[0]
     split_data = np.array_split(test_data[:num_targets], num_workers)
 
-    model_info.print_cinfo()
-
     with Pool(num_workers) as p:
         work = []
         for i, data in enumerate(split_data):
@@ -151,10 +149,8 @@ def eval_model(modelname:str, generation_method:str, fixed_bits:int):
     model_info = bnnc.torch.info_from_model(model, "bnn_model")
     
     # Floating point
-    model_info.floating_point = True
-
+    model_info.floating_point = False
     model_info.calculate_buffers(input_shape)
-    #model_info.print_buffer_info()
 
     if generation_method == "uniform":
         model_info.uniform_weight_transform()
@@ -166,6 +162,11 @@ def eval_model(modelname:str, generation_method:str, fixed_bits:int):
     model_info.fixed_bits = fixed_bits
 
     l, h, w = model_info.create_c_code()
+    model_info.print_cinfo()
+    model_info.print_buffer_info()
+    model_info.print_total_model_size()
+    return
+
     with open("Code/bnn_config.h", "w") as f:
         f.write(l)
     with open("Code/bnn_model.h", "w") as f:
@@ -178,6 +179,6 @@ def eval_model(modelname:str, generation_method:str, fixed_bits:int):
 
 if __name__ == "__main__":
     testconf.init_folders()
-    for model in ["LENET", "RESNET"]:
+    for model in testconf.Conf.model_list:
         eval_model(model, "uniform", 10)
         print('')

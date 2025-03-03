@@ -3,7 +3,7 @@ import numpy.typing as npt
 
 from math import sqrt, log2, ceil
 
-from prettytable import PrettyTable
+from prettytable import PrettyTable, TableStyle
 
 import os
 c_sources_abspath = f"{os.path.dirname(__file__)}/sources_c"
@@ -27,6 +27,26 @@ C_INTERNAL_GENERATORS = {
     "Custom": 2,
     "Bernoulli": 3
 }
+
+C_DTYPE_TO_BYTES = {
+    "uint8":  1,
+    "int8":   1,
+    "uint16": 2,
+    "int16":  2,
+    "uint32": 4,
+    "int32":  4
+}
+
+HUMAN_BYTE_SCALE = [
+    "B", "KiB", "MiB", "GiB"
+]
+
+def humanize_bytes(b: int):
+    i = 0
+    while b >= 1024 and i < 3:
+        b //= 1024
+        i += 1
+    return f"{b} {HUMAN_BYTE_SCALE[i]}"
 
 def get_datatype(signed: bool, max_val: int) -> str:
     bits = ceil(log2(max_val))
@@ -105,10 +125,12 @@ class ModelInfo:
         print(f"Generation Mode: {self.gen_mode}")
 
     def print_buffer_info(self):
-        #print(f"Max Buffer: {self.max_buffer_required}")
         t = PrettyTable(border=False, header=False)
+        t.set_style(TableStyle.MSWORD_FRIENDLY)
         for i, l in enumerate(self.layers):
             r = l.layer_info()
+            r.append(humanize_bytes(l.weight_buffer_size_bytes(self.data_types)))
+            r.append(humanize_bytes(4 * l.activation_buffer_required()))
             r.append(f"{self.buffer_sequence[i]}")
             t.add_row(r)
         print(t)
@@ -350,6 +372,15 @@ class ModelInfo:
 
         return f"{r}\n\n{c_data}"
 
+    def print_total_model_size(self):
+        size_in_b = 0
+        for i, l in enumerate(self.layers):
+            size_in_b += l.weight_buffer_size_bytes(self.data_types)
+        print(f"Model weights size {humanize_bytes(size_in_b)}")
+        
+        n_activation = sum(self.buffer_max_sizes)
+        print(f"Total activation sizes {humanize_bytes(n_activation * 4)}")
+
 
 class LayerInfo:
 
@@ -422,11 +453,24 @@ class LayerInfo:
         return r
 
     # Output shape size
+
+    def weight_buffer_size(self):
+        return np.array([0,0,0,0])
+
+    def weight_buffer_size_bytes(self, types_dict):
+        sizes = self.weight_buffer_size()
+        size_in_b = 0
+        size_in_b += sizes[0] * C_DTYPE_TO_BYTES[types_dict["SIGMA"]]
+        size_in_b += sizes[1] * C_DTYPE_TO_BYTES[types_dict["MU"]]
+        size_in_b += sizes[2] * C_DTYPE_TO_BYTES[types_dict["SIGMA_BIAS"]]
+        size_in_b += sizes[3] * C_DTYPE_TO_BYTES[types_dict["MU_BIAS"]]
+        return size_in_b
+
     def output_shape(self):
         print(f"Shape Not implemented for {type(self)}")
         panic()
 
-    def buffer_required(self):
+    def activation_buffer_required(self):
         return np.prod(self.in_buffer_shape) + np.prod(self.out_buffer_shape)
 
     def _info(self):
@@ -447,6 +491,7 @@ class LayerInfo:
 
         r.append(self.in_buffer_shape)
         r.append(self.out_buffer_shape)
+        r.append(self.weight_buffer_size())
 
         return r
 
@@ -604,6 +649,13 @@ class Conv2DInfo(LayerInfo):
     def _info(self):
         return [self.name, f"CONV2D", f"in={self.in_addr}, out={self.out_addr}", f"k={self.kernel_size} s={self.calculate_padding()} p={self.stride}"]
 
+    def weight_buffer_size(self):
+        return np.array([
+            self.sigma_buffer.size, 
+            self.mu_buffer.size, 
+            self.sigma_bias.size, 
+            self.mu_bias.size
+        ])
 
 class LinearInfo(LayerInfo):
     def __init__(self, l: LayerInfo):
@@ -636,6 +688,14 @@ class LinearInfo(LayerInfo):
 
     def _info(self):
         return [self.name, f"LINEAR", f"in={self.in_addr}, out={self.out_addr}", "-"]
+    
+    def weight_buffer_size(self):
+        return np.array([
+            self.sigma_buffer.size, 
+            self.mu_buffer.size, 
+            self.sigma_bias.size, 
+            self.mu_bias.size
+        ])
 
 
 class Pool2DInfo(LayerInfo):
