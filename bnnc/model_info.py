@@ -3,7 +3,7 @@ import numpy.typing as npt
 
 from math import sqrt, log2, ceil
 
-from prettytable import PrettyTable
+from prettytable import PrettyTable, TableStyle
 
 import os
 c_sources_abspath = f"{os.path.dirname(__file__)}/sources_c"
@@ -28,6 +28,26 @@ C_INTERNAL_GENERATORS = {
     "Bernoulli": 3
 }
 
+C_DTYPE_TO_BYTES = {
+    "uint8":  1,
+    "int8":   1,
+    "uint16": 2,
+    "int16":  2,
+    "uint32": 4,
+    "int32":  4
+}
+
+HUMAN_BYTE_SCALE = [
+    "B", "KiB", "MiB", "GiB"
+]
+
+def humanize_bytes(b: int):
+    i = 0
+    while b >= 1024 and i < 3:
+        b //= 1024
+        i += 1
+    return f"{b} {HUMAN_BYTE_SCALE[i]}"
+
 def get_datatype(signed: bool, max_val: int) -> str:
     bits = ceil(log2(max_val))
     dt = ""
@@ -47,8 +67,11 @@ def to_fixed(arr: npt.NDArray, fbits: int) -> npt.NDArray:
     return (arr * (2**fbits)).astype(int)
 
 def saturate_to_data_type(x: npt.NDArray, data_type: str) -> npt.NDArray:
-    drange = C_DATA_TYPE_RANGES[data_type]
-    return np.clip(x, drange[0], drange[1]).astype(int)
+    if data_type in ['float', 'double']:
+        return x
+    else:
+        drange = C_DATA_TYPE_RANGES[data_type]
+        return np.clip(x, drange[0], drange[1]).astype(int)
 
 def update_data_range(prev_range: tuple[float,float], arr: npt.NDArray) -> tuple[float,float]:
     if prev_range is None:
@@ -86,6 +109,7 @@ class ModelInfo:
         # C Info
         self.mc_passes = 100
         self.gen_mode = "Normal"
+        self.floating_point = False
         self.fixed_bits = 10
         self.data_types = {
             "MU": "int32",
@@ -101,10 +125,12 @@ class ModelInfo:
         print(f"Generation Mode: {self.gen_mode}")
 
     def print_buffer_info(self):
-        #print(f"Max Buffer: {self.max_buffer_required}")
         t = PrettyTable(border=False, header=False)
+        t.set_style(TableStyle.MSWORD_FRIENDLY)
         for i, l in enumerate(self.layers):
             r = l.layer_info()
+            r.append(humanize_bytes(l.weight_buffer_size_bytes(self.data_types)))
+            r.append(humanize_bytes(4 * l.activation_buffer_required()))
             r.append(f"{self.buffer_sequence[i]}")
             t.add_row(r)
         print(t)
@@ -240,6 +266,10 @@ class ModelInfo:
             l.mu_bias, l.sigma_bias = self._bernoulli(l.mu_bias, l.sigma_bias)
 
     def to_fixed(self):
+        # If using floating point do not transfrom to fixed point
+        if self.floating_point:
+            return
+        
         for l in self.layers:
             if not(isinstance(l, Conv2DInfo) or isinstance(l, LinearInfo)):
                 continue
@@ -265,9 +295,15 @@ class ModelInfo:
             data_range[3] = update_data_range(data_range[3], l.sigma_bias)
         
         for (min_v, max_v), t in zip(data_range, ["MU", "SIGMA", "MU_BIAS", "SIGMA_BIAS"]):
-            signed = min_v < 0
-            absmax_v = max(abs(min_v), max_v)
-            self.data_types[t] = get_datatype(signed, absmax_v)
+            if self.floating_point:
+                self.data_types[t] = "float"
+            else:
+                signed = min_v < 0
+                absmax_v = max(abs(min_v), max_v)
+                self.data_types[t] = get_datatype(signed, absmax_v)
+
+        if self.floating_point:
+            self.data_types["DATA"] = "float"
 
 
     def create_lib_config(self) -> str:
@@ -279,7 +315,13 @@ class ModelInfo:
         lib_config += f"#define BNN_BIAS_SIGMA_DT   {self.data_types["SIGMA_BIAS"]}\n"
         lib_config += f"#define BNN_BIAS_DT         {self.data_types["MU_BIAS"]}\n"
         lib_config += f"#define BNN_DATA_DT         {self.data_types["DATA"]}\n"
-        lib_config += f"#define BNN_SCALE_FACTOR    {self.fixed_bits}\n"
+        
+        if self.floating_point:
+            lib_config += f"#define FLOATING_TYPES\n"
+            lib_config += f"#define BNN_SCALE_FACTOR    0\n"
+        else:
+            lib_config += f"#define BNN_SCALE_FACTOR    {self.fixed_bits}\n"
+
         lib_config += f"#define BNN_INTERNAL_GEN    {C_INTERNAL_GENERATORS[self.gen_mode]}\n"
         lib_config += f"#define BNN_MC_PASSES       {self.mc_passes}\n"
         lib_config += "#endif\n"
@@ -317,16 +359,27 @@ class ModelInfo:
 
     def create_c_data(self, data: npt.NDArray) -> str:
         # data [num_data x num_features]
-
         # find data range/type
 
-        num_data, num_features = data.shape
-        c_data = ndarray_to_c(to_fixed(data, self.fixed_bits,), "data_matrix", "int32")
+        if self.floating_point:
+            c_data = ndarray_to_c(data, "data_matrix", "float")
+        else:
+            c_data = ndarray_to_c(to_fixed(data, self.fixed_bits), "data_matrix", "int32")
 
+        num_data, num_features = data.shape
         r = "#include <bnn/types.h>\n"
         r += f"#define NUM_DATA {num_data}\n#define FEATURES_PER_DATA {num_features}"
 
         return f"{r}\n\n{c_data}"
+
+    def print_total_model_size(self):
+        size_in_b = 0
+        for i, l in enumerate(self.layers):
+            size_in_b += l.weight_buffer_size_bytes(self.data_types)
+        print(f"Model weights size {humanize_bytes(size_in_b)}")
+        
+        n_activation = sum(self.buffer_max_sizes)
+        print(f"Total activation sizes {humanize_bytes(n_activation * 4)}")
 
 
 class LayerInfo:
@@ -400,11 +453,24 @@ class LayerInfo:
         return r
 
     # Output shape size
+
+    def weight_buffer_size(self):
+        return np.array([0,0,0,0])
+
+    def weight_buffer_size_bytes(self, types_dict):
+        sizes = self.weight_buffer_size()
+        size_in_b = 0
+        size_in_b += sizes[0] * C_DTYPE_TO_BYTES[types_dict["SIGMA"]]
+        size_in_b += sizes[1] * C_DTYPE_TO_BYTES[types_dict["MU"]]
+        size_in_b += sizes[2] * C_DTYPE_TO_BYTES[types_dict["SIGMA_BIAS"]]
+        size_in_b += sizes[3] * C_DTYPE_TO_BYTES[types_dict["MU_BIAS"]]
+        return size_in_b
+
     def output_shape(self):
         print(f"Shape Not implemented for {type(self)}")
         panic()
 
-    def buffer_required(self):
+    def activation_buffer_required(self):
         return np.prod(self.in_buffer_shape) + np.prod(self.out_buffer_shape)
 
     def _info(self):
@@ -425,6 +491,7 @@ class LayerInfo:
 
         r.append(self.in_buffer_shape)
         r.append(self.out_buffer_shape)
+        r.append(self.weight_buffer_size())
 
         return r
 
@@ -582,6 +649,13 @@ class Conv2DInfo(LayerInfo):
     def _info(self):
         return [self.name, f"CONV2D", f"in={self.in_addr}, out={self.out_addr}", f"k={self.kernel_size} s={self.calculate_padding()} p={self.stride}"]
 
+    def weight_buffer_size(self):
+        return np.array([
+            self.sigma_buffer.size, 
+            self.mu_buffer.size, 
+            self.sigma_bias.size, 
+            self.mu_bias.size
+        ])
 
 class LinearInfo(LayerInfo):
     def __init__(self, l: LayerInfo):
@@ -614,6 +688,14 @@ class LinearInfo(LayerInfo):
 
     def _info(self):
         return [self.name, f"LINEAR", f"in={self.in_addr}, out={self.out_addr}", "-"]
+    
+    def weight_buffer_size(self):
+        return np.array([
+            self.sigma_buffer.size, 
+            self.mu_buffer.size, 
+            self.sigma_bias.size, 
+            self.mu_bias.size
+        ])
 
 
 class Pool2DInfo(LayerInfo):

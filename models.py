@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from bnnc.torch import ResidualBlock, BasicBlock
+from bnnc.torch import ResidualBlock, BasicBlock, CompresionLayer, CompresionModel
 
 # Model definitions
 
@@ -21,6 +21,21 @@ class HYPER(nn.Module):
     def forward(self, x):
         x = self.l(x)
         return x
+
+class NEW_HYPER(nn.Module):
+
+    def __init__(self, old_module, nmc):
+        super().__init__()
+
+        self.cm = CompresionModel([
+            CompresionLayer(BasicBlock(old_module.get_submodule("l.0"), "relu"), nmc),
+            CompresionLayer(BasicBlock(old_module.get_submodule("l.2"), "relu"), nmc),
+            CompresionLayer(BasicBlock(old_module.get_submodule("l.4"), "softmax"), nmc)
+        ])
+
+    def forward(self, x):
+        return self.cm.forward(x)
+
 
 class B2N2(nn.Module):
 
@@ -56,6 +71,20 @@ class LENET(nn.Module):
         x = self.l(x)
         return x
 
+
+class NEW_LENET(nn.Module):
+
+    def __init__(self, old_module, nmc):
+        super().__init__()
+        self.cm = CompresionModel([
+            CompresionLayer(old_module.get_submodule("l.0"), nmc),
+            CompresionLayer(old_module.get_submodule("l.1"), nmc),
+            CompresionLayer(old_module.get_submodule("l.2"), nmc),
+            CompresionLayer(old_module.get_submodule("l.3"), nmc)
+        ])
+    
+    def forward(self, x):
+        return self.cm.forward(x)
 
 class AddResidual(nn.Module):
 

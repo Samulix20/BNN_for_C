@@ -77,7 +77,9 @@ inline void bnn_conv2D (
 					}
 				}
 
-				acc = acc >> S;
+				#ifndef FLOATING_TYPES
+					acc = acc >> S;
+				#endif
 
 				Iop_t q_mu_bias = (Iop_t) mu_bias[t]; 
 				Iop_t q_sigma_bias = (Iop_t) sigma_bias[t]; 
@@ -88,7 +90,7 @@ inline void bnn_conv2D (
 
 				idx = flat_idx_3d(i, j, t, out_jlen, out_tlen);
 				
-                // Apply f_act
+				// Apply f_act
 				if (f_act == ReLU_ID) {
 					q_o = ReLU(q_o);
 				}

@@ -22,12 +22,6 @@ inline size_t flat_idx_4d (
 	return (i * jlen * tlen * klen + flat_idx_3d(j, t, k, tlen, klen));
 }
 
-#if PROFILING_MODE == 2
-	uint64 num_bnn_mac = 0;
-	uint64 num_bnn_add = 0;
-#endif
-
-
 __attribute__((always_inline))
 inline Iop_t __fx_bnn_mac(Iop_t q_sigma, Iop_t q_mu, Iop_t q_x, Iop_t acc, Scale_t S) {
 	
@@ -64,34 +58,66 @@ inline Iop_t __fx_bnn_add(Iop_t q_sigma, Iop_t q_mu, Iop_t acc, Scale_t S) {
 	return acc;
 }
 
+// Internal kernels
 
-inline Iop_t bnn_mac(Iop_t q_sigma, Iop_t q_mu, Iop_t q_x, Iop_t acc, Scale_t S) {
-
-	#if PROFILING_MODE == 2
-		num_bnn_mac++;
+__attribute__((always_inline))
+inline Iop_t sample_weight_clt(Iop_t q_sigma, Iop_t q_mu, Scale_t S) {
+	Iop_t sample = clt_normal_sample(S);
+	Iop_t aux = q_sigma * sample;
+	#ifndef FLOATING_TYPES
+		aux >>= S;
 	#endif
+	return aux + q_mu;
+}
 
-	#if BNN_INTERNAL_GEN == 2
-		return __fx_bnn_mac(q_sigma, q_mu, q_x, acc, S);
-	#else
-		Iop_t w = get_weight(q_sigma, q_mu, S);
-		acc += w * q_x;
-		return acc;
+__attribute__((always_inline))
+inline Iop_t sample_weight_uniform(Iop_t q_sigma, Iop_t q_mu, Scale_t S) {
+	Iop_t sample = uniform_sample(S);
+	Iop_t aux = q_sigma * sample;
+	#ifndef FLOATING_TYPES
+		aux >>= S;
+	#endif
+	return aux + q_mu;
+}
+
+__attribute__((always_inline))
+inline Iop_t sample_weight_bernoulli(Iop_t q_sigma, Iop_t q_mu, Scale_t S) {
+	Iop_t sample = bernoulli_sample(S, q_mu);
+	Iop_t aux = q_sigma * sample;
+	#ifndef FLOATING_TYPES
+		aux >>= S;
+	#endif
+	return aux;
+}
+
+__attribute__((always_inline))
+inline Iop_t sample_weight(Iop_t q_sigma, Iop_t q_mu, Scale_t S) {
+	#if BNN_INTERNAL_GEN == 0
+		return sample_weight_clt(q_sigma, q_mu, S);
+	#elif BNN_INTERNAL_GEN == 1
+		return sample_weight_uniform(q_sigma, q_mu, S);
+	#elif BNN_INTERNAL_GEN == 3
+		return sample_weight_bernoulli(q_sigma, q_mu, S);
 	#endif
 }
 
+__attribute__((always_inline))
+inline Iop_t bnn_mac(Iop_t q_sigma, Iop_t q_mu, Iop_t q_x, Iop_t acc, Scale_t S) {
+	
+	#if BNN_INTERNAL_GEN == 0 || BNN_INTERNAL_GEN == 1 || BNN_INTERNAL_GEN == 3
+		return acc + sample_weight(q_sigma, q_mu, S) * q_x;
+	#elif BNN_INTERNAL_GEN == 2
+		return __fx_bnn_mac(q_sigma, q_mu, q_x, acc, S);
+	#endif
+}
 
+__attribute__((always_inline))
 inline Iop_t bnn_add(Iop_t q_sigma, Iop_t q_mu, Iop_t acc, Scale_t S) {
 	
-	#if PROFILING_MODE == 2
-		num_bnn_add++;
-	#endif
-
-	#if BNN_INTERNAL_GEN == 2
+	#if BNN_INTERNAL_GEN == 0 || BNN_INTERNAL_GEN == 1 || BNN_INTERNAL_GEN == 3
+		return acc + sample_weight(q_sigma, q_mu, S);
+	#elif BNN_INTERNAL_GEN == 2
 		return __fx_bnn_add(q_sigma, q_mu, acc, S);
-	#else
-		Iop_t q_bias = get_weight(q_sigma, q_mu, S);
-		return acc + q_bias;
 	#endif
 }
 

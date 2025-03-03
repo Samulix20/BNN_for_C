@@ -7,8 +7,6 @@ from bayesian_torch.layers.flipout_layers import conv_flipout as bnn_conv, linea
 
 from .model_info import *
 
-# Residual block, required for creating the residual buffers
-
 class BasicBlock(nn.Module):
     
     def __init__(self, layer: nn.Module, activation: str, flatten: bool = False, pool: nn.Module = None):
@@ -36,6 +34,8 @@ class BasicBlock(nn.Module):
             x = self.pool(x)
 
         return x
+
+# Residual block, required for creating the residual buffers
 
 class AddResidual(nn.Module):
     def __init__(self):
@@ -89,6 +89,51 @@ class ResidualBlock(nn.Module):
         y = self.res(x, y)
         y = self.relu2(y)
         return y
+
+
+# V0. Compresion layers
+# They calculate the distribution of the outputs and then resample them
+
+class CompresionModel(nn.Module):
+
+    def __init__(self, layer_list):
+        super().__init__()
+        self.layers = nn.ModuleList(layer_list)
+    
+    def forward(self, x):
+        y_mu = x
+        y_sigma = torch.zeros_like(x)
+        for l in self.layers:
+            y_mu, y_sigma, y = l.forward(y_mu, y_sigma)
+        return y
+
+class CompresionLayer(nn.Module):
+    def __init__(self, b: BasicBlock, nmc):
+        super().__init__()
+        self.block = b
+        self.nmc = nmc
+
+    def forward(self, x_mu, x_sigma):
+        
+        x_b = x_sigma * sqrt(12)
+        x_a = x_mu - x_b / 2
+        x_u = torch.zeros_like(x_b)
+
+        output_list = []
+        for _ in range(self.nmc):
+            
+            #x = torch.normal(x_mu, x_sigma)
+            x = x_u.uniform_() * x_b + x_a
+            
+            x = self.block.forward(x)
+            output_list.append(x)
+        
+        y = torch.stack(output_list)
+        y_mu = torch.mean(y, 0)
+        y_sigma = torch.std(y, 0)
+        
+        return y_mu, y_sigma, y
+
 
 def info_from_model(model: nn.Module, name: str) -> ModelInfo:
     """

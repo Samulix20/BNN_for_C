@@ -11,6 +11,7 @@ metrics.ipynb
 # Python env folders
 __pycache__
 pyenv
+*ipynb
 
 # Tmp/Log Files
 *.log

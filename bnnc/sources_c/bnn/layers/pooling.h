@@ -85,7 +85,11 @@ inline void layer_avg_pooling2D_pow2(
 
 				// Get average by shifting using pow2 (pow2 = 2**num_elements)
 				// avg = avg / num_elements
-				avg = avg >> pow2;
+				#ifdef FLOATING_TYPES
+					avg = avg / pow2;
+				#else
+					avg = avg >> pow2;
+				#endif
 
 				idx = flat_idx_3d(i, j, t, out_jlen, out_tlen);
 				output[idx] = avg;
